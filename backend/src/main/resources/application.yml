@@ -1,0 +1,36 @@
+spring:
+  application:
+    name: neon-aim-backend
+  profiles:
+    default: local
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+  flyway:
+    enabled: true
+  cache:
+    type: simple
+
+server:
+  port: ${SERVER_PORT:3100}
+  shutdown: graceful
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui
+
+app:
+  cors:
+    allowed-origins:
+      - ${FRONTEND_ORIGIN:http://127.0.0.1:5173}
