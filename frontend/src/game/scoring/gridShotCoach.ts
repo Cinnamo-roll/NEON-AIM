@@ -1,0 +1,2 @@
+import type{GridShotHistoryRecord}from'../types/training'
+export function trainingAdvice(r:GridShotHistoryRecord){if(r.accuracy<85)return`你的切换速度足够，但准确率只有 ${r.accuracy.toFixed(1)}%。下一局建议降低点击节奏，优先保持 90% 以上准确率。`;if((r.averageHitInterval||0)>400)return`你的准确率很稳定，但目标切换速度偏慢。下一局尝试将平均命中间隔压低至 ${Math.max(280,Math.round(r.averageHitInterval-30))}ms。`;if((r.consistencyScore||0)<70)return'你的峰值速度很好，但节奏波动较大。下一局专注连续五次等节奏命中，减少急停与补枪。';return'本局速度、准确率和稳定性保持良好。下一局尝试在维持准确率的同时延长高 Combo 阶段。'}

@@ -1,0 +1,8 @@
+import { describe, expect, it } from "vitest";
+import { advanceTargetVisual, assertGridShotTargetInvariants, createTargetPool, getTargetCounts, hitAndReplace, initializeThreeTargets, isVisuallyClickable } from "./gridShotTargetModel";
+
+describe("Grid Shot visual target invariants", () => {
+  it("maintains exactly three active and visually clickable targets", () => { const pool = createTargetPool(); initializeThreeTargets(pool); expect(assertGridShotTargetInvariants(pool)).toMatchObject({ active: 3, activeColliders: 3, visuallyClickableTargets: 3 }); });
+  it("removes a hit target from visual and collider semantics immediately", () => { const pool = createTargetPool(); initializeThreeTargets(pool); const target = pool[0]; expect(hitAndReplace(pool, target)).toBe(true); expect(isVisuallyClickable(target)).toBe(false); expect(target.ringVisible).toBe(false); expect(target.colliderRegistered).toBe(false); expect(target.bodyScale).toBe(0.8); expect(assertGridShotTargetInvariants(pool).visuallyClickableTargets).toBe(3); });
+  it("recycles hit feedback without ever rendering a fourth normal target over 5000 hits", () => { const pool = createTargetPool(); initializeThreeTargets(pool); for (let index = 0; index < 5000; index += 1) { const target = pool.find((candidate) => candidate.state === "active"); expect(target).toBeDefined(); hitAndReplace(pool, target!); for (const candidate of pool) advanceTargetVisual(candidate, 120); const counts = assertGridShotTargetInvariants(pool); expect(counts.visuallyClickableTargets).toBeLessThanOrEqual(3); } expect(getTargetCounts(pool).active).toBe(3); });
+});
