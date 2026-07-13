@@ -1,14 +1,12 @@
 import { Fragment, useEffect, useId, useMemo, useRef, useState } from "react";
 import {
-  Accessibility,
+  ArrowLeft,
   Check,
   ChevronDown,
   ChevronUp,
   Copy,
   Crosshair as CrosshairIcon,
-  Database,
   Eye,
-  Gauge,
   MonitorCog,
   MousePointer2,
   RotateCcw,
@@ -22,34 +20,32 @@ import { GameIcon } from "../components/GameIcon";
 import { FPS_OPTIONS, type FpsLimit } from "../game/performance/frameRate";
 import {
   canonicalFromProfile,
-  createNeonInputSensitivity,
   gameProfilesForDisplay,
   profiles,
   roundSensitivity,
   sensitivityFromProfile,
 } from "../game/sensitivity/sensitivity";
 import {
-  applyGraphicsPreset,
   CATEGORY_DEFAULTS,
-  patchCustomGraphics,
-  type ConfigurableCategory,
 } from "../game/settings/trainingSettings";
+import {
+  applyCrosshairPreset,
+  CROSSHAIR_PRESETS,
+  type CrosshairPresetId,
+} from "../game/settings/crosshairPresets";
 import type { TrainingSettings } from "../game/types/training";
 
-type Tab = ConfigurableCategory | "accessibility" | "data";
+type Tab = "input" | "crosshair" | "display" | "audio";
 
-const tabs: Array<{ id: Tab; label: string; note: string; icon: typeof MousePointer2 }> = [
-  { id: "input", label: "控制", note: "鼠标与灵敏度", icon: MousePointer2 },
-  { id: "crosshair", label: "准星", note: "轮廓与命中确认", icon: CrosshairIcon },
-  { id: "graphics", label: "画面", note: "性能与可读性", icon: MonitorCog },
-  { id: "hud", label: "训练", note: "HUD 与目标显示", icon: Gauge },
-  { id: "audio", label: "音频", note: "独立反馈音量", icon: Volume2 },
-  { id: "accessibility", label: "辅助功能", note: "后续版本", icon: Accessibility },
-  { id: "data", label: "数据", note: "后续版本", icon: Database },
+const tabs: Array<{ id: Tab; label: string; icon: typeof MousePointer2 }> = [
+  { id: "input", label: "控制", icon: MousePointer2 },
+  { id: "crosshair", label: "准星", icon: CrosshairIcon },
+  { id: "display", label: "显示", icon: MonitorCog },
+  { id: "audio", label: "音频", icon: Volume2 },
 ];
 
 const GRAPHICS_KEYS: Array<keyof TrainingSettings> = [
-  "fov", "fpsLimit", "renderScale", "dprMode", "graphicsPreset", "particleQuality", "fogEnabled", "dynamicGridEnabled", "lowSpec", "antialiasEnabled",
+  "fpsLimit", "renderScale", "dprMode", "graphicsPreset", "lowSpec", "antialiasEnabled",
 ];
 
 function SettingRow({ label, help, value, children }: { label: string; help: string; value?: string; children: React.ReactNode }) {
@@ -169,7 +165,7 @@ function GameSelectControl({ label, value, onChange }: { label: string; value: s
         }}
       >
         <GameIcon gameId={selected.id} />
-        <span><b>{gameTriggerLabels[selected.id] ?? selected.name}</b><small>{selected.id === "neon" ? "TRAINER" : `GAME · ${selected.name.charAt(0).toUpperCase()}`}</small></span>
+        <span><b>{gameTriggerLabels[selected.id] ?? selected.name}</b><small>{selected.id === "neon" ? "训练器" : "游戏灵敏度"}</small></span>
         <ChevronDown size={15} />
       </button>
       {open && (
@@ -190,7 +186,7 @@ function GameSelectControl({ label, value, onChange }: { label: string; value: s
                   onKeyDown={(event) => handleOptionKeyDown(event, index)}
                 >
                   <GameIcon gameId={profile.id} />
-                  <span><b>{profile.name}</b><small>{profile.id === "neon" ? "NEON TRAINER" : profile.status === "verified" ? "VERIFIED" : "REFERENCE"}</small></span>
+                  <span><b>{profile.name}</b><small>{profile.id === "neon" ? "训练器" : profile.status === "verified" ? "已验证" : "参考数据"}</small></span>
                   {profile.id === value && <Check size={15} />}
                 </button>
               </Fragment>
@@ -206,53 +202,42 @@ function Toggle({ label, checked, onChange }: { label: string; checked: boolean;
   return <button type="button" role="switch" aria-label={label} aria-checked={checked} className={`toggle-control ${checked ? "on" : ""}`} onClick={() => onChange(!checked)}><span /><b>{checked ? "开启" : "关闭"}</b></button>;
 }
 
-function Segmented<T extends string>({ label, value, options, onChange }: { label: string; value: T; options: Array<{ value: T; label: string }>; onChange: (value: T) => void }) {
-  return <div className="segmented-control" role="group" aria-label={label}>{options.map((option) => <button type="button" className={value === option.value ? "active" : ""} aria-pressed={value === option.value} onClick={() => onChange(option.value)} key={option.value}>{option.label}</button>)}</div>;
-}
-
-const crosshairTypes = [
-  { value: "cross", label: "十字" },
-  { value: "cross-dot", label: "十字点" },
-  { value: "dot", label: "圆点" },
-  { value: "circle", label: "圆环" },
-  { value: "t-shape", label: "T 型" },
-] as const;
-
-function CrosshairTypePicker({ settings, onChange }: { settings: TrainingSettings; onChange: (value: TrainingSettings["crosshair"]) => void }) {
+function CrosshairPresetPicker({ settings, onApply }: { settings: TrainingSettings; onApply: (value: CrosshairPresetId) => void }) {
   return (
-    <div className="crosshair-type-grid" role="group" aria-label="准星类型">
-      {crosshairTypes.map((type) => (
-        <button type="button" className={settings.crosshair === type.value ? "active" : ""} aria-pressed={settings.crosshair === type.value} onClick={() => onChange(type.value)} key={type.value}>
-          <span className="crosshair-type-preview"><TrainingCrosshair settings={{ ...settings, crosshair: type.value, crosshairOpacity: 1 }} /></span>
-          <b>{type.label}</b>
-          {settings.crosshair === type.value && <Check size={14} />}
+    <div className="crosshair-preset-grid" role="group" aria-label="准星快捷样式">
+      {CROSSHAIR_PRESETS.map((preset) => (
+        <button type="button" aria-label={`应用${preset.label}样式`} onClick={() => onApply(preset.id)} key={preset.id}>
+          <span className="crosshair-preset-preview"><TrainingCrosshair settings={{ ...settings, ...preset.parameters, crosshairOpacity: 1 }} /></span>
+          <b>{preset.label}</b>
         </button>
       ))}
     </div>
   );
 }
 
+function CrosshairArmPicker({ settings, onChange }: { settings: TrainingSettings; onChange: (key: "crosshairTop" | "crosshairBottom" | "crosshairLeft" | "crosshairRight", value: boolean) => void }) {
+  const arms = [
+    { key: "crosshairTop", label: "上" },
+    { key: "crosshairBottom", label: "下" },
+    { key: "crosshairLeft", label: "左" },
+    { key: "crosshairRight", label: "右" },
+  ] as const;
+  return <div className="crosshair-arm-picker" role="group" aria-label="准星线条方向">{arms.map(({ key, label }) => <button type="button" className={settings[key] ? "active" : ""} aria-pressed={settings[key]} onClick={() => onChange(key, !settings[key])} key={key}>{label}</button>)}</div>;
+}
+
 function SettingsPreview({ tab, settings }: { tab: Tab; settings: TrainingSettings }) {
-  if (tab !== "graphics" && tab !== "hud") return null;
+  if (tab !== "display") return null;
   return (
-    <aside className="settings-inspector settings-preview-panel" aria-label={tab === "graphics" ? "画面效果预览" : "训练显示预览"}>
+    <aside className="settings-inspector settings-preview-panel" aria-label="训练显示预览">
       <div className="inspector-heading"><Eye size={18} /><div><small>LIVE PREVIEW</small><h3>效果预览</h3></div></div>
       <div className="preview-reference-note">仅供参考 · 实际效果以全屏训练为准</div>
-      {tab === "graphics" ? <>
-        <div className="grid-shot-settings-preview graphics-settings-preview">
-          <div className="preview-stage-label"><span>GRID SHOT</span><b>LIVE</b></div>
-          <GridShotSettingsPreview settings={settings} />
-          <TrainingCrosshair settings={settings} />
-        </div>
-      </> : <>
-        <div className="grid-shot-settings-preview training-settings-preview" style={{ "--preview-hud-scale": settings.hudScale, "--preview-hud-opacity": settings.hudOpacity } as React.CSSProperties}>
-          <div className="preview-stage-label"><span>TRAINING HUD</span><b>LIVE</b></div>
-          <GridShotSettingsPreview settings={settings} />
-          <div className="preview-hud"><span>SCORE<b>12,480</b><em>COMBO ×18</em></span><strong>00:38<em>GRID SHOT</em></strong><span>ACCURACY<b>91.4%</b><em>138 TPM</em></span></div>
-          <TrainingCrosshair settings={settings} />
-          {settings.showFps && <small>158 FPS · 6.3ms</small>}
-        </div>
-      </>}
+      <div className="grid-shot-settings-preview training-settings-preview" style={{ "--preview-hud-scale": settings.hudScale, "--preview-hud-opacity": settings.hudOpacity } as React.CSSProperties}>
+        <div className="preview-stage-label"><span>TRAINING HUD</span><b>LIVE</b></div>
+        <GridShotSettingsPreview settings={settings} />
+        <div className="preview-hud"><span>SCORE<b>12,480</b><em>COMBO ×18</em></span><strong>00:38<em>GRID SHOT</em></strong><span>ACCURACY<b>91.4%</b><em>138 TPM</em></span></div>
+        <TrainingCrosshair settings={settings} />
+        {settings.showFps && <small>158 FPS · 6.3ms</small>}
+      </div>
     </aside>
   );
 }
@@ -261,7 +246,14 @@ function SettingsSection({ eyebrow, title, description, children }: { eyebrow: s
   return <section className="settings-section"><header><span>{eyebrow}</span><h3>{title}</h3><p>{description}</p></header><div className="settings-section-body">{children}</div></section>;
 }
 
-export function SettingsWorkspace({ settings, onApply }: { settings: TrainingSettings; onApply: (value: Partial<TrainingSettings>) => void }) {
+type SettingsWorkspaceProps = {
+  settings: TrainingSettings;
+  onApply: (value: Partial<TrainingSettings>) => void;
+  onClose?: () => void;
+  context?: "global" | "grid-shot";
+};
+
+export function SettingsWorkspace({ settings, onApply, onClose, context = "global" }: SettingsWorkspaceProps) {
   const [draft, setDraft] = useState(settings);
   const [tab, setTab] = useState<Tab>("input");
   const [confirm, setConfirm] = useState(0);
@@ -286,7 +278,6 @@ export function SettingsWorkspace({ settings, onApply }: { settings: TrainingSet
   const changedKeys = useMemo(() => (Object.keys(draft) as Array<keyof TrainingSettings>).filter((key) => draft[key] !== settings[key]), [draft, settings]);
   const changed = changedKeys.length > 0;
   const graphicsChanged = changedKeys.some((key) => GRAPHICS_KEYS.includes(key));
-  const canonical = createNeonInputSensitivity(draft);
   const effectiveDpr = Math.min((draft.dprMode === "auto" ? devicePixelRatio : draft.dprMode) * draft.renderScale, 2.5);
   const fullscreenWidth = typeof window === "undefined" ? 2560 : window.screen.width;
   const fullscreenHeight = typeof window === "undefined" ? 1440 : window.screen.height;
@@ -296,20 +287,18 @@ export function SettingsWorkspace({ settings, onApply }: { settings: TrainingSet
   const sourceCanonical = canonicalFromProfile(sourceSensitivityForCanonical, draft.mouseDpi, sourceProfile);
   const converted = sensitivityFromProfile(sourceCanonical, targetProfile);
   const convertedForTarget = converted === null ? null : target === "neon" ? converted / draft.horizontalRatio : converted;
-  const isDotCrosshair = draft.crosshair === "dot";
-  const isCircleCrosshair = draft.crosshair === "circle";
-  const isLineCrosshair = !isDotCrosshair && !isCircleCrosshair;
-
   const patch = <K extends keyof TrainingSettings>(key: K, value: TrainingSettings[K]) => setDraft((current) => ({ ...current, [key]: value }));
-  const patchGraphics = <K extends keyof TrainingSettings>(key: K, value: TrainingSettings[K]) => setDraft((current) => patchCustomGraphics(current, key, value));
+  const patchGraphics = <K extends keyof TrainingSettings>(key: K, value: TrainingSettings[K]) => patch(key, value);
   const apply = () => {
     rollbackRef.current = settings;
     onApply(draft);
     if (graphicsChanged) setConfirm(12);
   };
   const resetCategory = () => {
-    if (tab === "accessibility" || tab === "data") return;
-    setDraft((current) => ({ ...current, ...CATEGORY_DEFAULTS[tab] }));
+    const defaults = tab === "display"
+      ? { ...CATEGORY_DEFAULTS.graphics, ...CATEGORY_DEFAULTS.hud }
+      : CATEGORY_DEFAULTS[tab];
+    setDraft((current) => ({ ...current, ...defaults }));
   };
   const copyConverted = async () => {
     if (convertedForTarget === null) return;
@@ -320,11 +309,6 @@ export function SettingsWorkspace({ settings, onApply }: { settings: TrainingSet
 
   const inputContent = (
     <>
-      <div className="control-summary" aria-label="当前控制摘要">
-        <span><small>基础灵敏度</small><strong>{draft.sensitivity.toFixed(3)}</strong></span>
-        <span><small>物理距离</small><strong>{canonical.cmPer360.toFixed(2)} <em>cm / 360</em></strong></span>
-        <span><small>轴向倍率</small><strong>{draft.horizontalRatio.toFixed(2)} <em>X</em> / {draft.verticalRatio.toFixed(2)} <em>Y</em></strong></span>
-      </div>
       <SettingsSection eyebrow="MOUSE CONTROL" title="鼠标控制" description="调整鼠标移动与视角转动的手感。大多数玩家只需要设置基础灵敏度和 DPI。">
         <SettingRow label="基础灵敏度" help="数值越高，移动相同距离时视角转动得越快" value={draft.sensitivity.toFixed(3)}><NumberControl label="基础灵敏度" value={draft.sensitivity} min={0.01} max={10} step={0.001} onChange={(value) => patch("sensitivity", roundSensitivity(value))} /></SettingRow>
         <SettingRow label="鼠标 DPI" help="填写鼠标软件中正在使用的 DPI，用于计算 cm/360" value={`${draft.mouseDpi} DPI`}><NumberControl label="鼠标 DPI" value={draft.mouseDpi} min={50} max={32000} step={50} onChange={(value) => patch("mouseDpi", value)} /></SettingRow>
@@ -361,76 +345,61 @@ export function SettingsWorkspace({ settings, onApply }: { settings: TrainingSet
   );
 
   const crosshairContent = (
-    <>
-      <div className="crosshair-workbench"><div><small>实时预览</small><TrainingCrosshair settings={draft} /></div><span>训练中的实际大小预览</span></div>
-      <SettingsSection eyebrow="RETICLE" title="准星结构" description="选择容易辨认的准星样式，再调整当前样式支持的大小和间距。">
-        <CrosshairTypePicker settings={draft} onChange={(value) => patch("crosshair", value)} />
-        <SettingRow label="主颜色" help="同时用于普通命中确认" value={draft.crosshairColor.toUpperCase()}><label className="color-control"><input aria-label="准星主颜色" type="color" value={draft.crosshairColor} onChange={(event) => patch("crosshairColor", event.target.value)} /><span style={{ background: draft.crosshairColor }} /></label></SettingRow>
-        {isDotCrosshair && <SettingRow label="圆点大小" help="控制中心圆点的实际像素直径" value={`${draft.crosshairThickness + 1}px`}><RangeControl label="准星圆点大小" value={draft.crosshairThickness} min={1} max={6} step={1} onChange={(value) => patch("crosshairThickness", value)} /></SettingRow>}
-        {isCircleCrosshair && <SettingRow label="环线粗细" help="控制圆环边缘的像素宽度" value={`${draft.crosshairThickness}px`}><RangeControl label="准星环线粗细" value={draft.crosshairThickness} min={1} max={5} step={1} onChange={(value) => patch("crosshairThickness", value)} /></SettingRow>}
-        {isCircleCrosshair && <SettingRow label="圆环直径" help="控制圆环外轮廓直径" value={`${draft.crosshairLength * 2}px`}><RangeControl label="准星圆环直径" value={draft.crosshairLength} min={3} max={16} step={1} onChange={(value) => patch("crosshairLength", value)} /></SettingRow>}
-        {isLineCrosshair && <SettingRow label="线条粗细" help={draft.crosshair === "cross-dot" ? "同时控制线条宽度和中心点大小" : "准星横线与竖线的像素宽度"} value={`${draft.crosshairThickness}px`}><RangeControl label="准星线条粗细" value={draft.crosshairThickness} min={1} max={5} step={1} onChange={(value) => patch("crosshairThickness", value)} /></SettingRow>}
-        {isLineCrosshair && <SettingRow label="线条长度" help="控制准星各方向线段的长度" value={`${draft.crosshairLength}px`}><RangeControl label="准星线条长度" value={draft.crosshairLength} min={2} max={20} step={1} onChange={(value) => patch("crosshairLength", value)} /></SettingRow>}
-        {isLineCrosshair && <SettingRow label="中心间距" help="控制线段与瞄准中心之间的留白" value={`${draft.crosshairGap}px`}><RangeControl label="准星中心间距" value={draft.crosshairGap} min={0} max={14} step={1} onChange={(value) => patch("crosshairGap", value)} /></SettingRow>}
-        <SettingRow label="准星透明度" help="只影响准星，不影响命中浮字" value={`${Math.round(draft.crosshairOpacity * 100)}%`}><RangeControl label="准星透明度" value={draft.crosshairOpacity} min={0.2} max={1} step={0.05} onChange={(value) => patch("crosshairOpacity", value)} /></SettingRow>
-        <SettingRow label="命中确认环" help="命中时在准星附近显示短促脉冲"><Toggle label="命中确认环" checked={draft.showHitMarker} onChange={(value) => patch("showHitMarker", value)} /></SettingRow>
-      </SettingsSection>
-    </>
+    <SettingsSection eyebrow="RETICLE" title="准星设置" description="先选一个接近你习惯的样式，再调整颜色、尺寸和结构。">
+      <div className="crosshair-editor-hero">
+        <div className="crosshair-workbench"><small>实时预览</small><div className="crosshair-preview-center"><TrainingCrosshair settings={draft} /></div><span>实际尺寸</span></div>
+        <div className="crosshair-presets"><small>快捷样式</small><CrosshairPresetPicker settings={draft} onApply={(value) => setDraft((current) => applyCrosshairPreset(current, value))} /></div>
+      </div>
+      <div className="settings-subsection-label"><span>细节调整</span></div>
+        <SettingRow label="主颜色" help="统一控制线条、中心点和外环颜色" value={draft.crosshairColor.toUpperCase()}><label className="color-control"><input aria-label="准星主颜色" type="color" value={draft.crosshairColor} onChange={(event) => patch("crosshairColor", event.target.value)} /><span style={{ background: draft.crosshairColor }} /></label></SettingRow>
+        <SettingRow label="线条方向" help="分别控制上、下、左、右四条线，可组合出 T 型或不对称准星" value={`${[draft.crosshairTop, draft.crosshairBottom, draft.crosshairLeft, draft.crosshairRight].filter(Boolean).length}/4`}><CrosshairArmPicker settings={draft} onChange={(key, value) => patch(key, value)} /></SettingRow>
+        <SettingRow label="线条粗细" help="四向线条和外环共用的像素宽度" value={`${draft.crosshairThickness}px`}><RangeControl label="准星线条粗细" value={draft.crosshairThickness} min={1} max={5} step={1} onChange={(value) => patch("crosshairThickness", value)} /></SettingRow>
+        <SettingRow label="线条长度" help="控制每条已启用线段的长度" value={`${draft.crosshairLength}px`}><RangeControl label="准星线条长度" value={draft.crosshairLength} min={2} max={20} step={1} onChange={(value) => patch("crosshairLength", value)} /></SettingRow>
+        <SettingRow label="中心间距" help="控制线段与瞄准中心之间的留白" value={`${draft.crosshairGap}px`}><RangeControl label="准星中心间距" value={draft.crosshairGap} min={0} max={14} step={1} onChange={(value) => patch("crosshairGap", value)} /></SettingRow>
+        <SettingRow label="中心圆点" help="独立于线条和外环，可与任意结构叠加"><Toggle label="中心圆点" checked={draft.crosshairCenterDot} onChange={(value) => patch("crosshairCenterDot", value)} /></SettingRow>
+        {draft.crosshairCenterDot && <SettingRow label="圆点大小" help="调整中心圆点的大小" value={`${draft.crosshairDotSize}px`}><RangeControl label="准星圆点大小" value={draft.crosshairDotSize} min={1} max={8} step={1} onChange={(value) => patch("crosshairDotSize", value)} /></SettingRow>}
+        <SettingRow label="外环" help="独立的圆形轮廓，可与线条、中心点同时使用"><Toggle label="准星外环" checked={draft.crosshairRing} onChange={(value) => patch("crosshairRing", value)} /></SettingRow>
+        {draft.crosshairRing && <SettingRow label="外环直径" help="调整外环的整体大小" value={`${draft.crosshairRingDiameter}px`}><RangeControl label="准星外环直径" value={draft.crosshairRingDiameter} min={8} max={40} step={1} onChange={(value) => patch("crosshairRingDiameter", value)} /></SettingRow>}
+        <SettingRow label="准星透明度" help="调整准星整体的透明程度" value={`${Math.round(draft.crosshairOpacity * 100)}%`}><RangeControl label="准星透明度" value={draft.crosshairOpacity} min={0.2} max={1} step={0.05} onChange={(value) => patch("crosshairOpacity", value)} /></SettingRow>
+    </SettingsSection>
   );
 
-  const graphicsContent = (
-    <>
-      <SettingsSection eyebrow="DISPLAY" title="画面设置" description="集中调整 FOV、画质预设、帧率和清晰度。大多数设备选择高画质和跟随显示器即可。">
-        <div className="preset-grid">{(["low", "medium", "high", "ultra"] as const).map((preset) => <button type="button" className={draft.graphicsPreset === preset ? "active" : ""} onClick={() => setDraft((current) => applyGraphicsPreset(current, preset))} key={preset}><span>{preset === "low" ? "性能" : preset === "medium" ? "均衡" : preset === "high" ? "高画质" : "极致"}</span><small>{preset === "low" ? "优先流畅度" : preset === "medium" ? "清晰与性能平衡" : preset === "high" ? "清晰竞技画面" : "适合高分辨率屏幕"}</small>{draft.graphicsPreset === preset && <Check size={16} />}</button>)}</div>
-        {draft.graphicsPreset === "custom" && <div className="custom-preset-note">自定义 · 已手动调整画面选项</div>}
-        <SettingRow label="FOV" help="同时改变横向和纵向可见范围；数值越大，看到的区域越宽" value={`${draft.fov.toFixed(0)}°`}><RangeControl label="FOV" value={draft.fov} min={60} max={120} step={1} onChange={(value) => patchGraphics("fov", value)} /></SettingRow>
+  const displayContent = (
+      <SettingsSection eyebrow="DISPLAY" title="显示设置" description="调整画面清晰度、帧率和训练信息的显示方式。">
         <SettingRow label="FPS 上限" help="通常建议选择“跟随显示器”，也可以限制帧率以降低显卡占用"><SelectControl label="FPS 上限" value={draft.fpsLimit} onChange={(value) => patchGraphics("fpsLimit", (value === "auto" ? "auto" : Number(value)) as FpsLimit)}>{FPS_OPTIONS.filter((option) => option !== "unlimited").map((option) => <option value={option} key={option}>{option === "auto" ? "跟随显示器" : `${option} FPS`}</option>)}</SelectControl></SettingRow>
         <SettingRow label="渲染比例" help="降低可提升流畅度，提高可让目标和场景边缘更清晰" value={`${Math.round(draft.renderScale * 100)}%`}><SelectControl label="渲染比例" value={draft.renderScale} onChange={(value) => patchGraphics("renderScale", Number(value))}>{[0.5, 0.67, 0.75, 0.85, 1, 1.1, 1.25].map((value) => <option value={value} key={value}>{Math.round(value * 100)}%</option>)}</SelectControl></SettingRow>
         <SettingRow label="高分屏清晰度" help="高分辨率屏幕可适当提高；选择自动即可适配大多数设备" value={`${effectiveDpr.toFixed(2)}×`}><SelectControl label="高分屏清晰度" value={draft.dprMode} onChange={(value) => patchGraphics("dprMode", value === "auto" ? "auto" : Number(value) as 1)}>{["auto", 1, 1.25, 1.5, 1.75, 2].map((value) => <option value={value} key={value}>{value === "auto" ? "自动" : `${value}×`}</option>)}</SelectControl></SettingRow>
+        <SettingRow label="抗锯齿" help="减少目标和场景边缘的锯齿；下次进入训练时应用"><Toggle label="抗锯齿" checked={draft.antialiasEnabled} onChange={(value) => patchGraphics("antialiasEnabled", value)} /></SettingRow>
         <div className="render-readout"><span>预计全屏渲染分辨率</span><strong>{Math.round(fullscreenWidth * effectiveDpr)} × {Math.round(fullscreenHeight * effectiveDpr)}</strong><small>按当前显示器全屏尺寸与清晰度估算</small></div>
-      </SettingsSection>
-      <SettingsSection eyebrow="VISUAL EFFECTS" title="视觉效果" description="集中控制影响性能的场景效果。关闭这些选项不会改变灵敏度、目标大小或计分。">
-        <SettingRow label="抗锯齿" help="减少目标和场景边缘的锯齿；关闭后可略微降低显卡占用"><Toggle label="抗锯齿" checked={draft.antialiasEnabled} onChange={(value) => patchGraphics("antialiasEnabled", value)} /></SettingRow>
-        <SettingRow label="灯光层次" help="完整模式拥有更丰富的空间光照；精简模式优先保证流畅度"><Segmented label="灯光层次" value={draft.lowSpec ? "lean" : "full"} options={[{ value: "lean", label: "精简" }, { value: "full", label: "完整" }]} onChange={(value) => patchGraphics("lowSpec", value === "lean")} /></SettingRow>
-        <SettingRow label="命中粒子" help="控制命中目标时粒子效果的数量"><Segmented label="命中粒子" value={draft.particleQuality} options={[{ value: "off", label: "关闭" }, { value: "low", label: "少量" }, { value: "high", label: "完整" }]} onChange={(value) => patchGraphics("particleQuality", value)} /></SettingRow>
-        <SettingRow label="环境雾" help="启用训练舱远景深度雾"><Toggle label="环境雾" checked={draft.fogEnabled} onChange={(value) => patchGraphics("fogEnabled", value)} /></SettingRow>
-        <SettingRow label="地面参考网格" help="显示低对比度距离参考"><Toggle label="地面参考网格" checked={draft.dynamicGridEnabled} onChange={(value) => patchGraphics("dynamicGridEnabled", value)} /></SettingRow>
-      </SettingsSection>
-    </>
-  );
-
-  const hudContent = (
-    <SettingsSection eyebrow="TRAINING READOUT" title="训练显示" description="调整训练中的成绩信息和目标外观。所有更改都会用于下一次训练。">
+        <div className="settings-subsection-label"><span>训练界面</span><small>按自己的阅读习惯调整</small></div>
       <SettingRow label="HUD 缩放" help="统一缩放成绩、计时和FPS信息" value={`${Math.round(draft.hudScale * 100)}%`}><RangeControl label="HUD 缩放" value={draft.hudScale} min={0.7} max={1.4} step={0.05} onChange={(value) => patch("hudScale", value)} /></SettingRow>
       <SettingRow label="HUD 透明度" help="不影响准星和目标" value={`${Math.round(draft.hudOpacity * 100)}%`}><RangeControl label="HUD 透明度" value={draft.hudOpacity} min={0.2} max={1} step={0.05} onChange={(value) => patch("hudOpacity", value)} /></SettingRow>
       <SettingRow label="性能信息" help="在右下角显示FPS与帧时间"><Toggle label="显示性能信息" checked={draft.showFps} onChange={(value) => patch("showFps", value)} /></SettingRow>
-      <SettingRow label="目标颜色" help="修改正式目标主体材质" value={draft.targetColor.toUpperCase()}><label className="color-control"><input aria-label="目标颜色" type="color" value={draft.targetColor} onChange={(event) => patch("targetColor", event.target.value)} /><span style={{ background: draft.targetColor }} /></label></SettingRow>
-      <SettingRow label="目标大小" help="同时调整目标的显示大小和可命中范围" value={`${draft.targetSize.toFixed(2)}×`}><RangeControl label="目标大小" value={draft.targetSize} min={0.7} max={1.4} step={0.05} onChange={(value) => patch("targetSize", value)} /></SettingRow>
     </SettingsSection>
   );
 
   const audioContent = (
-    <SettingsSection eyebrow="FEEDBACK MIX" title="训练音频" description="命中、Miss和Combo拥有独立通道，倒计时与结束提示只跟随总音量。">
-      <SettingRow label="总音量" help="所有训练音效的主增益" value={`${Math.round(draft.volume * 100)}%`}><RangeControl label="总音量" value={draft.volume} min={0} max={1} step={0.05} onChange={(value) => patch("volume", value)} /></SettingRow>
-      <SettingRow label="命中音量" help="普通命中与快速命中" value={`${Math.round(draft.hitVolume * 100)}%`}><RangeControl label="命中音量" value={draft.hitVolume} min={0} max={1} step={0.05} onChange={(value) => patch("hitVolume", value)} /></SettingRow>
-      <SettingRow label="Miss 音量" help="射空与Combo中断反馈" value={`${Math.round(draft.missVolume * 100)}%`}><RangeControl label="Miss 音量" value={draft.missVolume} min={0} max={1} step={0.05} onChange={(value) => patch("missVolume", value)} /></SettingRow>
-      <SettingRow label="Combo 音量" help="里程碑与纪录节奏提示" value={`${Math.round(draft.comboVolume * 100)}%`}><RangeControl label="Combo 音量" value={draft.comboVolume} min={0} max={1} step={0.05} onChange={(value) => patch("comboVolume", value)} /></SettingRow>
-      <SettingRow label="全部静音" help="停止创建和播放新的训练声音"><Toggle label="全部静音" checked={draft.muted} onChange={(value) => patch("muted", value)} /></SettingRow>
+    <SettingsSection eyebrow="AUDIO" title="音频设置" description="调整训练中的整体音量，需要安静时可以一键静音。">
+      <SettingRow label="总音量" help="调整所有训练音效的音量" value={`${Math.round(draft.volume * 100)}%`}><RangeControl label="总音量" value={draft.volume} min={0} max={1} step={0.05} onChange={(value) => patch("volume", value)} /></SettingRow>
+      <SettingRow label="全部静音" help="关闭所有训练音效"><Toggle label="全部静音" checked={draft.muted} onChange={(value) => patch("muted", value)} /></SettingRow>
     </SettingsSection>
   );
 
-  const content = tab === "input" ? inputContent : tab === "crosshair" ? crosshairContent : tab === "graphics" ? graphicsContent : tab === "hud" ? hudContent : tab === "audio" ? audioContent : <div className="settings-empty"><span>{tab === "accessibility" ? <Accessibility /> : <Database />}</span><small>COMING SOON</small><h3>{tab === "accessibility" ? "辅助功能" : "数据管理"}</h3><p>这部分功能仍在准备中，开放后会在这里提供设置。</p></div>;
-  const hasPreview = tab === "graphics" || tab === "hud";
+  const content = tab === "input" ? inputContent : tab === "crosshair" ? crosshairContent : tab === "display" ? displayContent : audioContent;
+  const hasPreview = tab === "display";
 
   return (
     <main className="settings-workspace">
-      <header className="settings-titlebar"><div><small>PLAYER SETTINGS</small><h1>设置</h1><p>调整控制、画面、准星和声音，让训练更符合你的习惯。</p></div></header>
+      <header className="settings-titlebar">
+        <div><small>{context === "grid-shot" ? "GRID SHOT · PAUSED" : "PLAYER SETTINGS"}</small><h1>{context === "grid-shot" ? "系统设置" : "设置"}</h1><p>{context === "grid-shot" ? "调整鼠标、显示、准星和声音。训练规则请在开始前通过“训练设置”修改。" : "调整控制、显示、准星和声音，让训练更符合你的习惯。"}</p></div>
+        {onClose && <button type="button" className="settings-return" onClick={onClose}><ArrowLeft size={17} />返回暂停界面</button>}
+      </header>
       <div className={`settings-shell ${hasPreview ? "has-preview" : "no-preview"}`}>
-        <nav className="settings-tabs" aria-label="设置分类">{tabs.map((item) => { const Icon = item.icon; return <button type="button" className={tab === item.id ? "active" : ""} onClick={() => setTab(item.id)} key={item.id}><Icon size={18} /><span><b>{item.label}</b><small>{item.note}</small></span></button>; })}</nav>
+        <nav className="settings-tabs" aria-label="设置分类">{tabs.map((item) => { const Icon = item.icon; return <button type="button" className={tab === item.id ? "active" : ""} onClick={() => setTab(item.id)} key={item.id}><Icon size={18} /><b>{item.label}</b></button>; })}</nav>
         <section className="settings-content">{content}</section>
         {hasPreview && <SettingsPreview tab={tab} settings={draft} />}
       </div>
-      <div className="settings-actions"><div><span className={changed ? "dirty" : ""} />{changed ? `已修改 ${changedKeys.length} 项` : "所有更改均已保存"}</div><button type="button" onClick={() => setDraft(settings)} disabled={!changed}><Undo2 size={16} />撤销修改</button><button type="button" onClick={resetCategory} disabled={tab === "accessibility" || tab === "data"}><RotateCcw size={16} />恢复本类默认</button><button type="button" className="primary" disabled={!changed} onClick={apply}><Check size={17} />保存设置</button></div>
+      <div className="settings-actions"><div><span className={changed ? "dirty" : ""} />{changed ? `已修改 ${changedKeys.length} 项` : "所有更改均已保存"}</div><button type="button" onClick={() => setDraft(settings)} disabled={!changed}><Undo2 size={16} />撤销修改</button><button type="button" onClick={resetCategory}><RotateCcw size={16} />恢复本类默认</button><button type="button" className="primary" disabled={!changed} onClick={apply}><Check size={17} />保存设置</button></div>
       {confirm > 0 && <div className="graphics-confirm"><small>DISPLAY SAFETY</small><h3>保留新的画面设置？</h3><strong>{confirm}</strong><p>倒计时结束将恢复应用前的画面配置。</p><div><button type="button" className="primary" onClick={() => setConfirm(0)}>保留设置</button><button type="button" onClick={() => { onApply(rollbackRef.current); setDraft(rollbackRef.current); setConfirm(0); }}>恢复旧设置</button></div></div>}
     </main>
   );

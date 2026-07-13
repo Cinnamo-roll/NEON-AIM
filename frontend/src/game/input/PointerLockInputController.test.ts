@@ -253,6 +253,25 @@ describe("PointerLockInputController", () => {
     expect(controller.getAngles().pitch).toBe(1.15);
   });
 
+  it("supports mode-specific yaw bounds without accumulating overshoot", () => {
+    const { controller, configuration, state } = harness();
+    controller.updateConfiguration({ ...configuration(), yawMin: -Math.PI / 2, yawMax: Math.PI / 2 });
+    controller.attach();
+    state.now = 100;
+    controller.handleMouseMovement({ movementX: 5000, movementY: 0 });
+    expect(controller.getAngles().yaw).toBeCloseTo(-Math.PI / 2, 12);
+    state.now = 200;
+    controller.handleMouseMovement({ movementX: -10, movementY: 0 });
+    expect(controller.getAngles().yaw).toBeCloseTo(-Math.PI / 2 + 0.01, 12);
+  });
+
+  it("applies yaw bounds when a mode resets the view", () => {
+    const { controller, configuration } = harness();
+    controller.updateConfiguration({ ...configuration(), yawMin: -1, yawMax: 1 });
+    controller.setAngles(4, 0);
+    expect(controller.getAngles()).toEqual({ yaw: 1, pitch: 0 });
+  });
+
   it("rejects non-finite input without poisoning camera angles", () => {
     const { controller, state } = harness();
     controller.attach();

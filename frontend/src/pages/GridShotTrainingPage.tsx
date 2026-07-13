@@ -1,5 +1,5 @@
 import { Canvas } from "@react-three/fiber";
-import { Home, Play, RotateCcw, Settings as SettingsIcon } from "lucide-react";
+import { Home, Play, RotateCcw, Settings as SettingsIcon, SlidersHorizontal } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   GridShotArenaScene,
@@ -10,10 +10,13 @@ import {
 } from "../components/training/GridShotArenaScene";
 import { TrainingCrosshair } from "../components/training/Crosshair";
 import { TrainingHud } from "../components/training/TrainingHud";
-import { AudioManager } from "../game/audio/AudioManager";
+import { GridShotModeSettingsPanel } from "../components/training/GridShotModeSettingsPanel";
+import { SettingsWorkspace } from "./SettingsWorkspace";
+import { AudioManager, countdownWarningSeconds } from "../game/audio/AudioManager";
 import { CanvasPerformanceMonitor, RenderScheduler } from "../game/performance/PerformanceMonitor";
 import { usePerformanceStore } from "../game/performance/performanceStore";
 import { GRID_SHOT_QA_DURATION } from "../game/qa/gridShotQa";
+import { getGridShotScene, getGridShotTargetSize, type GridShotModeSettings } from "../game/modes/gridShot/gridShotConfig";
 import type {
   PointerInputDebugSnapshot,
   PointerInputMode,
@@ -41,11 +44,9 @@ import {
   type TrainingSessionMachine,
   type TransitionResult,
 } from "../game/session/trainingStateMachine";
-import { gridShotBests, saveHistory } from "../game/storage/trainingStorage";
 import type { GridShotHistoryRecord, GridShotSessionStats, TrainingSettings, TrainingState } from "../game/types/training";
 import "../game/session/finish.css";
 
-const FORMAL_DURATION = 60;
 const QA_DURATION = GRID_SHOT_QA_DURATION;
 const COMBO_MILESTONES = [10, 20, 30, 50];
 
@@ -71,19 +72,23 @@ const emptyFeedbackSlots = (): FeedbackSlot[] => Array.from({ length: 4 }, (_, i
 
 type GridShotTrainingPageProps = {
   settings: TrainingSettings;
+  gridShotSettings: GridShotModeSettings;
   onHome: () => void;
-  onSettings: () => void;
-  onResult: (record: GridShotHistoryRecord, previous?: GridShotHistoryRecord) => void;
+  onApplySettings: (value: Partial<TrainingSettings>) => void;
+  onApplyGridShotSettings: (value: Partial<GridShotModeSettings>) => void;
+  onResult: (record: GridShotHistoryRecord) => void;
   qaMode?: boolean;
 };
 
-export function GridShotTrainingPage({ settings, onHome, onSettings, onResult, qaMode = false }: GridShotTrainingPageProps) {
+export function GridShotTrainingPage({ settings, gridShotSettings, onHome, onApplySettings, onApplyGridShotSettings, onResult, qaMode = false }: GridShotTrainingPageProps) {
   const query = useMemo(() => new URLSearchParams(location.search), []);
   const devVisual = import.meta.env.DEV && query.get("devVisual") === "1";
   const devEndSession = import.meta.env.DEV && query.get("devEndSession") === "1";
   const debugInput = import.meta.env.DEV && query.get("debugInput") === "1";
   const visualMode = qaMode || devVisual;
-  const duration = qaMode ? QA_DURATION : devVisual ? 30 : devEndSession ? 3 : FORMAL_DURATION;
+  const duration = qaMode ? QA_DURATION : devVisual ? 30 : devEndSession ? 3 : gridShotSettings.duration;
+  const activeScene = getGridShotScene(gridShotSettings.sceneId);
+  const activeTargetSize = getGridShotTargetSize(gridShotSettings.targetSize);
 
   const machineRef = useRef<TrainingSessionMachine>(createTrainingSessionMachine(crypto.randomUUID()));
   const statsRef = useRef(createEmptyGridShotStats(machineRef.current.sessionId, duration));
@@ -93,35 +98,33 @@ export function GridShotTrainingPage({ settings, onHome, onSettings, onResult, q
   const [stats, setStats] = useState(() => ({ ...statsRef.current }));
   const [feedbackSlots, setFeedbackSlots] = useState(emptyFeedbackSlots);
   const [milestone, setMilestone] = useState("");
-  const [paceNotice, setPaceNotice] = useState("");
+  const [impactFlash, setImpactFlash] = useState<{ id: number; accent: "normal" | "fast" | "combo" }>({ id: 0, accent: "normal" });
   const [hitMarker, setHitMarker] = useState(false);
   const [fastMarker, setFastMarker] = useState(false);
   const [missMarker, setMissMarker] = useState(false);
   const [diagnostics, setDiagnostics] = useState<SceneDiagnostics>();
   const [inputDiagnostics, setInputDiagnostics] = useState<PointerInputDebugSnapshot>();
   const [pointerInputMode, setPointerInputMode] = useState<PointerInputMode>("unlocked");
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [trainingSettingsOpen, setTrainingSettingsOpen] = useState(false);
 
   const fullscreenRootRef = useRef<HTMLDivElement>(null);
   const hudRef = useRef<HTMLDivElement>(null);
   const sceneApi = useRef<GridShotSceneApi>(null);
   const remainingRef = useRef(duration);
   const lastFrame = useRef(performance.now());
-  const lastWarningSecond = useRef(11);
-  const paceNotified = useRef(false);
   const feedbackCursor = useRef(0);
-  const savedRecordRef = useRef<{ record: GridShotHistoryRecord; previous?: GridShotHistoryRecord } | undefined>(undefined);
+  const sessionResultRef = useRef<GridShotHistoryRecord | undefined>(undefined);
   const timers = useRef<number[]>([]);
   const fps = usePerformanceStore((state) => state.metrics.current);
   const frameTime = usePerformanceStore((state) => state.metrics.frameTime);
-  const bests = gridShotBests();
-  const paceBest = visualMode ? Math.max(500, bests.score) : bests.score;
   const audio = useMemo(() => new AudioManager({
     master: () => settings.volume,
-    hit: () => settings.hitVolume,
-    miss: () => settings.missVolume,
-    combo: () => settings.comboVolume,
+    hit: () => gridShotSettings.hitVolume,
+    miss: () => gridShotSettings.missVolume,
+    combo: () => gridShotSettings.comboVolume,
     muted: () => settings.muted,
-  }), [settings.comboVolume, settings.hitVolume, settings.missVolume, settings.muted, settings.volume]);
+  }), [gridShotSettings.comboVolume, gridShotSettings.hitVolume, gridShotSettings.missVolume, settings.muted, settings.volume]);
 
   const schedule = useCallback((callback: () => void, delay: number) => {
     const timer = window.setTimeout(callback, delay);
@@ -146,6 +149,14 @@ export function GridShotTrainingPage({ settings, onHome, onSettings, onResult, q
     });
   }, []);
 
+  useEffect(() => {
+    if (machineRef.current.state !== "ready") return;
+    remainingRef.current = duration;
+    setRemaining(duration);
+    statsRef.current = createEmptyGridShotStats(machineRef.current.sessionId, duration);
+    sync();
+  }, [duration, sync]);
+
   const commit = useCallback((transition: TransitionResult) => {
     machineRef.current = transition.machine;
     if (transition.changed) setTrainingState(transition.machine.state);
@@ -169,12 +180,6 @@ export function GridShotTrainingPage({ settings, onHome, onSettings, onResult, q
     audio.play("combo");
   }, [audio, schedule]);
 
-  const showPace = useCallback((percent: number) => {
-    setPaceNotice(`NEW RECORD PACE|+${percent.toFixed(1)}%`);
-    schedule(() => setPaceNotice(""), 780);
-    audio.play("combo");
-  }, [audio, schedule]);
-
   const processShot = useCallback((
     hit: boolean,
     reaction: number,
@@ -191,10 +196,10 @@ export function GridShotTrainingPage({ settings, onHome, onSettings, onResult, q
       setMissMarker(true);
       schedule(() => setMissMarker(false), 120);
       sync();
-      return { fast: false };
+      return { accent: "normal" as const };
     }
 
-    const scored = applyGridShotHit(current, forcedInterval ?? null, reaction, duration, paceBest, {
+    const scored = applyGridShotHit(current, forcedInterval ?? null, reaction, duration, 0, {
       timestamp,
       elapsedMs,
       targetId: metadata?.targetId,
@@ -203,6 +208,7 @@ export function GridShotTrainingPage({ settings, onHome, onSettings, onResult, q
     });
     const interval = scored.interval;
     const fast = scored.speedBonus >= 40;
+    const comboHit = COMBO_MILESTONES.includes(current.combo);
     audio.play(fast ? "fast" : "hit");
     pushHitFeedback(scored.total, fast ? "FAST" : "", interval, current.combo, scored.stabilityBonus > 0);
     setHitMarker(true);
@@ -211,14 +217,11 @@ export function GridShotTrainingPage({ settings, onHome, onSettings, onResult, q
       setHitMarker(false);
       setFastMarker(false);
     }, 120);
-    if (COMBO_MILESTONES.includes(current.combo)) showMilestone(current.combo);
-    if (!paceNotified.current && current.personalBestDeltaPercent >= 5) {
-      paceNotified.current = true;
-      showPace(current.personalBestDeltaPercent);
-    }
+    if (comboHit) showMilestone(current.combo);
+    setImpactFlash((flash) => ({ id: flash.id + 1, accent: comboHit ? "combo" : fast ? "fast" : "normal" }));
     sync();
-    return { fast };
-  }, [audio, duration, paceBest, pushHitFeedback, schedule, showMilestone, showPace, sync]);
+    return { accent: comboHit ? "combo" as const : fast ? "fast" as const : "normal" as const };
+  }, [audio, duration, pushHitFeedback, schedule, showMilestone, sync]);
 
   const requestLock = useCallback(async () => {
     const root = fullscreenRootRef.current;
@@ -276,15 +279,13 @@ export function GridShotTrainingPage({ settings, onHome, onSettings, onResult, q
     commit(resetSession(machineRef.current, crypto.randomUUID()));
     statsRef.current = createEmptyGridShotStats(machineRef.current.sessionId, duration);
     remainingRef.current = duration;
-    lastWarningSecond.current = 11;
-    paceNotified.current = false;
-    savedRecordRef.current = undefined;
+    sessionResultRef.current = undefined;
     feedbackCursor.current = 0;
     setStats({ ...statsRef.current });
     setRemaining(duration);
     setCountdown(3);
     setMilestone("");
-    setPaceNotice("");
+    setImpactFlash({ id: 0, accent: "normal" });
     setFeedbackSlots(emptyFeedbackSlots());
   }, [commit, duration]);
 
@@ -327,17 +328,35 @@ export function GridShotTrainingPage({ settings, onHome, onSettings, onResult, q
 
   useEffect(() => {
     const keyboard = (event: KeyboardEvent) => {
+      if (trainingSettingsOpen) {
+        if (event.key === "Escape") setTrainingSettingsOpen(false);
+        return;
+      }
+      if (settingsOpen) {
+        if (event.key === "Escape") setSettingsOpen(false);
+        return;
+      }
+      if ((machineRef.current.state === "playing" || machineRef.current.state === "countdown") && event.key === "Tab") {
+        event.preventDefault();
+        return;
+      }
       if (machineRef.current.state === "paused") {
         if (event.key === "Escape") void (visualMode ? Promise.resolve(enterPlaying()) : requestLock());
         if (event.key.toLowerCase() === "r") restart();
+        if (event.key.toLowerCase() === "s") setSettingsOpen(true);
         if (event.key.toLowerCase() === "q") onHome();
         return;
       }
-      if (event.key === "Escape" && machineRef.current.state === "playing") pauseAction("escape");
+      if (event.key === "Escape" && machineRef.current.state === "playing") {
+        event.preventDefault();
+        if (document.pointerLockElement) document.exitPointerLock();
+        if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined);
+        pauseAction("escape");
+      }
     };
     window.addEventListener("keydown", keyboard);
     return () => window.removeEventListener("keydown", keyboard);
-  }, [enterPlaying, onHome, pauseAction, requestLock, restart, visualMode]);
+  }, [enterPlaying, onHome, pauseAction, requestLock, restart, settingsOpen, trainingSettingsOpen, visualMode]);
 
   useEffect(() => {
     if (trainingState !== "countdown") return;
@@ -364,19 +383,21 @@ export function GridShotTrainingPage({ settings, onHome, onSettings, onResult, q
     const loop = (now: number) => {
       const delta = Math.min(0.1, (now - lastFrame.current) / 1000);
       lastFrame.current = now;
-      remainingRef.current = Math.max(0, remainingRef.current - delta);
+      const previousRemaining = remainingRef.current;
+      remainingRef.current = Math.max(0, previousRemaining - delta);
       const elapsed = duration - remainingRef.current;
       statsRef.current.elapsedTime = elapsed;
 
-      const warningSecond = Math.ceil(remainingRef.current);
-      if (warningSecond <= 10 && warningSecond > 0 && warningSecond !== lastWarningSecond.current) {
-        lastWarningSecond.current = warningSecond;
-        audio.play(warningSecond <= 3 ? "start" : "tick");
+      const crossedWarnings = countdownWarningSeconds(previousRemaining, remainingRef.current);
+      if (crossedWarnings.length > 0) {
+        const warningSecond = crossedWarnings[crossedWarnings.length - 1];
+        if (warningSecond <= 3) audio.playCountdown(warningSecond);
+        else audio.play("tick");
       }
 
       if (now - lastHud > 80) {
         lastHud = now;
-        refreshGridShotStats(statsRef.current, elapsed * 1000, paceBest);
+        refreshGridShotStats(statsRef.current, elapsed * 1000, 0);
         setRemaining(remainingRef.current);
         sync();
       }
@@ -388,7 +409,7 @@ export function GridShotTrainingPage({ settings, onHome, onSettings, onResult, q
     };
     frame = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(frame);
-  }, [audio, beginFinishAction, duration, paceBest, sync, trainingState]);
+  }, [audio, beginFinishAction, duration, sync, trainingState]);
 
   useEffect(() => {
     if (trainingState !== "finishing") return;
@@ -408,15 +429,13 @@ export function GridShotTrainingPage({ settings, onHome, onSettings, onResult, q
     const saveClaim = claimResultSave(machineRef.current);
     commit(saveClaim);
     if (saveClaim.changed) {
-      const record = createGridShotRecord(statsRef.current, duration);
-      const previous = visualMode ? undefined : saveHistory(record)[1];
-      savedRecordRef.current = { record, previous };
+      sessionResultRef.current = createGridShotRecord(statsRef.current, duration);
     }
     const navigationClaim = claimResultNavigation(machineRef.current);
     commit(navigationClaim);
-    if (navigationClaim.changed && savedRecordRef.current) {
+    if (navigationClaim.changed && sessionResultRef.current) {
       if (document.fullscreenElement) void document.exitFullscreen?.().catch(() => undefined);
-      onResult(savedRecordRef.current.record, savedRecordRef.current.previous);
+      onResult(sessionResultRef.current);
     }
   }, [commit, duration, onResult, trainingState, visualMode]);
 
@@ -459,9 +478,10 @@ export function GridShotTrainingPage({ settings, onHome, onSettings, onResult, q
 
   return (
     <div
-      className={`grid-training-root ${visualMode ? "qa-mode" : ""} ${COMBO_MILESTONES.includes(stats.combo) ? "combo-pulse" : ""} state-${trainingState}`}
+      className={`grid-training-root ${visualMode ? "qa-mode" : ""} effect-${gridShotSettings.hitEffectStyle} ${COMBO_MILESTONES.includes(stats.combo) ? "combo-pulse" : ""} state-${trainingState}`}
       ref={fullscreenRootRef}
       data-testid="grid-shot-fullscreen-root"
+      data-hit-effect-style={gridShotSettings.hitEffectStyle}
     >
       <div className="grid-training-canvas">
         <Canvas
@@ -475,6 +495,7 @@ export function GridShotTrainingPage({ settings, onHome, onSettings, onResult, q
             ref={sceneApi}
             state={trainingState}
             settings={settings}
+            modeSettings={gridShotSettings}
             visualMode={visualMode}
             debugInput={debugInput}
             pointerInputMode={pointerInputMode}
@@ -493,7 +514,6 @@ export function GridShotTrainingPage({ settings, onHome, onSettings, onResult, q
           <TrainingHud
             stats={stats}
             remaining={remaining}
-            personalBest={paceBest}
             fps={fps}
             frameTime={frameTime}
             showFps={settings.showFps}
@@ -525,17 +545,20 @@ export function GridShotTrainingPage({ settings, onHome, onSettings, onResult, q
         {missMarker && <div className="miss-feedback">MISS</div>}
       </div>
 
+      {impactFlash.id > 0 && gridShotSettings.screenGlow > 0 && (
+        <div
+          key={impactFlash.id}
+          className={`grid-hit-vignette ${impactFlash.accent}`}
+          style={{ "--grid-hit-glow-strength": gridShotSettings.screenGlow } as React.CSSProperties}
+          aria-hidden="true"
+        />
+      )}
+
       {milestone && (
         <div className="combo-milestone">
           {milestone.split("|").map((line) => <span key={line}>{line}</span>)}
         </div>
       )}
-      {paceNotice && (
-        <div className="record-pace-notice">
-          {paceNotice.split("|").map((line) => <span key={line}>{line}</span>)}
-        </div>
-      )}
-
       {trainingState === "ready" && (
         <div className="training-overlay ready-panel">
           <span className="eyebrow">CLICKING / FOUNDATION 01</span>
@@ -543,13 +566,13 @@ export function GridShotTrainingPage({ settings, onHome, onSettings, onResult, q
           <p>看清目标，准星停稳，再打出下一枪。</p>
           <div className="ready-metrics">
             <span>训练时长<b>{duration} 秒</b></span>
-            <span>历史最高分<b>{bests.score.toLocaleString()}</b></span>
-            <span>最佳准确率<b>{bests.accuracy.toFixed(1)}%</b></span>
-            <span>最佳 TPM<b>{bests.tpm.toFixed(0)}</b></span>
-            <span>灵敏度 / FOV<b>{settings.sensitivity} / {settings.fov.toFixed(0)}°</b></span>
+            <span>同时目标<b>3 个</b></span>
+            <span>训练场景<b>{activeScene.name}</b></span>
+            <span>目标尺寸<b>{activeTargetSize.label}</b></span>
           </div>
           <div className="ready-actions">
             <button className="primary" onClick={start}><Play size={18} />开始训练</button>
+            <button onClick={() => setTrainingSettingsOpen(true)}><SlidersHorizontal size={17} />训练设置</button>
             <button onClick={onHome}><Home size={17} />返回主页</button>
           </div>
         </div>
@@ -576,7 +599,7 @@ export function GridShotTrainingPage({ settings, onHome, onSettings, onResult, q
             <div className="pause-actions">
               <button className="primary" onClick={visualMode ? enterPlaying : requestLock}><Play size={18} />继续训练<kbd>ESC</kbd></button>
               <button onClick={restart}><RotateCcw size={17} />重新开始<kbd>R</kbd></button>
-              <button onClick={onSettings}><SettingsIcon size={17} />调整设置</button>
+              <button onClick={() => setSettingsOpen(true)}><SettingsIcon size={17} />系统设置<kbd>S</kbd></button>
               <button onClick={onHome}><Home size={17} />退出训练<kbd>Q</kbd></button>
             </div>
           </div>
@@ -587,8 +610,27 @@ export function GridShotTrainingPage({ settings, onHome, onSettings, onResult, q
         <div className="finishing-summary">
           <span>SESSION COMPLETE</span>
           <strong>{stats.score.toLocaleString()}</strong>
-          {stats.personalBestDeltaPercent > 0 && <small>NEW RECORD PACE</small>}
+          <small>TRAINING COMPLETE</small>
         </div>
+      )}
+
+      {settingsOpen && (
+        <div className="in-training-settings-layer" role="dialog" aria-modal="true" aria-label="系统设置">
+          <SettingsWorkspace
+            settings={settings}
+            onApply={onApplySettings}
+            onClose={() => setSettingsOpen(false)}
+            context="grid-shot"
+          />
+        </div>
+      )}
+
+      {trainingSettingsOpen && (
+        <GridShotModeSettingsPanel
+          settings={gridShotSettings}
+          onApply={onApplyGridShotSettings}
+          onClose={() => setTrainingSettingsOpen(false)}
+        />
       )}
 
       {visualMode && (
@@ -605,12 +647,6 @@ export function GridShotTrainingPage({ settings, onHome, onSettings, onResult, q
             miss: () => processShot(false, 0),
             addCombo: () => qaHit(260),
             combo20: () => qaCombo(20),
-            pace: () => {
-              if (statsRef.current.elapsedTime < 2) statsRef.current.elapsedTime = 2;
-              paceNotified.current = true;
-              qaHit(180);
-              showPace(6.4);
-            },
             finalTen: () => {
               remainingRef.current = 9.8;
               setRemaining(9.8);
@@ -702,7 +738,6 @@ function QaPanel({
         <button onClick={actions.miss}>Miss</button>
         <button onClick={actions.addCombo}>增加 Combo</button>
         <button onClick={actions.combo20}>Combo 20</button>
-        <button onClick={actions.pace}>Record Pace</button>
         <button onClick={actions.finalTen}>最后 10 秒</button>
         <button onClick={actions.finish}>正常结束</button>
         <button onClick={actions.restart}>重新开始</button>

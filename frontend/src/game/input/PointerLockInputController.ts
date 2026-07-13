@@ -107,6 +107,8 @@ export interface PointerInputConfiguration {
   onFocusChanged?: (focused: boolean) => void;
   onVisibilityChanged?: (visible: boolean) => void;
   debugEnabled: boolean;
+  yawMin?: number;
+  yawMax?: number;
   pitchMin?: number;
   pitchMax?: number;
   guardDurationMs?: number;
@@ -208,7 +210,7 @@ export class PointerLockInputController {
   }
 
   setAngles(yaw: number, pitch: number) {
-    this.yaw = Number.isFinite(yaw) ? yaw : 0;
+    this.yaw = Number.isFinite(yaw) ? this.clampYaw(yaw) : 0;
     this.pitch = Number.isFinite(pitch) ? this.clampPitch(pitch) : 0;
     this.configuration.onAnglesChanged(this.yaw, this.pitch);
   }
@@ -352,7 +354,7 @@ export class PointerLockInputController {
 
     const invertXMultiplier = this.configuration.getInvertX() ? -1 : 1;
     const invertYMultiplier = this.configuration.getInvertY() ? -1 : 1;
-    const nextYaw = yawBefore - appliedMovementX * radiansPerMouseCount * horizontalRatio * invertXMultiplier;
+    const nextYaw = this.clampYaw(yawBefore - appliedMovementX * radiansPerMouseCount * horizontalRatio * invertXMultiplier);
     const nextPitch = this.clampPitch(pitchBefore - appliedMovementY * radiansPerMouseCount * verticalRatio * invertYMultiplier);
     if (!Number.isFinite(nextYaw) || !Number.isFinite(nextPitch)) return ignored("non-finite-angle");
 
@@ -416,6 +418,10 @@ export class PointerLockInputController {
 
   private clampPitch(value: number) {
     return Math.max(this.configuration.pitchMin ?? -1.15, Math.min(this.configuration.pitchMax ?? 1.15, value));
+  }
+
+  private clampYaw(value: number) {
+    return Math.max(this.configuration.yawMin ?? Number.NEGATIVE_INFINITY, Math.min(this.configuration.yawMax ?? Number.POSITIVE_INFINITY, value));
   }
 
   private record(event: MouseInputDebugEvent) {

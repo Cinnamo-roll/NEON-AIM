@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { effectiveSoundLevel, type AudioLevelSource } from "./AudioManager";
+import { countdownWarningSeconds, effectiveSoundLevel, type AudioLevelSource } from "./AudioManager";
 
 const levels = (overrides: Partial<Record<keyof AudioLevelSource, number | boolean>> = {}): AudioLevelSource => ({
   master: () => Number(overrides.master ?? 0.5),
@@ -21,5 +21,12 @@ describe("training audio levels", () => {
   it("honors mute and clamps invalid levels", () => {
     expect(effectiveSoundLevel("hit", levels({ muted: true }))).toBe(0);
     expect(effectiveSoundLevel("hit", levels({ master: 4, hit: -2 }))).toBe(0);
+  });
+
+  it("detects every crossed countdown second without repeating frames", () => {
+    expect(countdownWarningSeconds(10.04, 9.98)).toEqual([10]);
+    expect(countdownWarningSeconds(3.08, 2.97)).toEqual([3]);
+    expect(countdownWarningSeconds(2.04, 0.96)).toEqual([2, 1]);
+    expect(countdownWarningSeconds(2.97, 2.9)).toEqual([]);
   });
 });

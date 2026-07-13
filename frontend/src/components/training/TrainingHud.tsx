@@ -3,7 +3,6 @@ import type { GridShotSessionStats } from "../../game/types/training";
 type TrainingHudProps = {
   stats: GridShotSessionStats;
   remaining: number;
-  personalBest?: number;
   fps?: number;
   frameTime?: number;
   showFps?: boolean;
@@ -12,31 +11,26 @@ type TrainingHudProps = {
 export function TrainingHud({
   stats,
   remaining,
-  personalBest = 0,
   fps = 0,
   frameTime = 0,
   showFps = true,
 }: TrainingHudProps) {
-  const pace = stats.personalBestDeltaPercent;
+  const displayedSecond = Math.ceil(remaining);
+  const isFinalThree = displayedSecond <= 3;
   return (
     <>
-      <div className={`training-hud ${remaining <= 10 ? "final-ten" : ""}`} data-testid="grid-shot-hud">
+      <div className={`training-hud ${remaining <= 10 ? "final-ten" : ""} ${isFinalThree ? "final-three" : ""}`} data-testid="grid-shot-hud">
         <section className="hud-left">
           <small>SCORE</small>
           <strong className="hud-score">{stats.score.toLocaleString()}</strong>
           <span className="hud-combo">COMBO <b>×{stats.combo}</b></span>
-          <span className="hud-max">BEST ×{stats.maxCombo}</span>
+          <span className="hud-max">MAX ×{stats.maxCombo}</span>
         </section>
         <section className="hud-center">
           <div className="hud-time">
-            <strong>00:{String(Math.ceil(remaining)).padStart(2, "0")}</strong>
-            <small>GRID SHOT</small>
+            <strong key={isFinalThree ? displayedSecond : "timer"}>00:{String(displayedSecond).padStart(2, "0")}</strong>
+            <small>{isFinalThree ? "最后冲刺" : "GRID SHOT"}</small>
           </div>
-          {personalBest > 0 && (
-            <div className={`hud-pace ${pace >= 0 ? "pace-ahead" : "pace-behind"}`}>
-              {pace >= 0 ? "+" : ""}{pace.toFixed(1)}% {pace >= 0 ? "AHEAD OF BEST" : "BEHIND BEST"}
-            </div>
-          )}
         </section>
         <section className="hud-right">
           <small>ACCURACY</small>

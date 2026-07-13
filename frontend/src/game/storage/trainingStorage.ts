@@ -12,31 +12,17 @@ export function readHistory(): GridShotHistoryRecord[] {
     return [];
   }
 }
-export function saveHistory(record: GridShotHistoryRecord) {
-  const records = [record, ...readHistory()].slice(0, 100);
-  localStorage.setItem(HISTORY_KEY, JSON.stringify(records));
-  return records;
-}
-export function gridShotBests() {
-  const h = readHistory();
-  return {
-    score: Math.max(0, ...h.map((r) => r.score)),
-    accuracy: Math.max(0, ...h.map((r) => r.accuracy)),
-    tpm: Math.max(0,...h.map(r=>r.targetsPerMinute)),
-    averageReaction: h.length
-      ? Math.min(
-          ...h
-            .filter((r) => r.averageReactionTime > 0)
-            .map((r) => r.averageReactionTime),
-        )
-      : 0,
-  };
-}
 export function mergeSettings(defaults: TrainingSettings): TrainingSettings {
   try {
+    const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}") as Record<string, unknown>;
+    const known = Object.fromEntries(
+      (Object.keys(defaults) as Array<keyof TrainingSettings>)
+        .filter((key) => saved[key] !== undefined)
+        .map((key) => [key, saved[key]]),
+    ) as Partial<TrainingSettings>;
     return {
       ...defaults,
-      ...JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}"),
+      ...known,
     };
   } catch {
     return defaults;

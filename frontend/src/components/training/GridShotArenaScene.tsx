@@ -4,6 +4,13 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRe
 import * as THREE from "three";
 import { createNeonInputSensitivity } from "../../game/sensitivity/sensitivity";
 import {
+  GRID_SHOT_CONFIG,
+  getGridShotScene,
+  getGridShotTargetSize,
+  gridShotParticleCount,
+  type GridShotModeSettings,
+} from "../../game/modes/gridShot/gridShotConfig";
+import {
   PointerLockInputController,
   type PointerInputMode,
   type PointerInputDebugSnapshot,
@@ -20,37 +27,26 @@ import {
   type GridShotTargetModel,
 } from "../../game/targets/gridShotTargetModel";
 import type { TrainingSettings, TrainingState } from "../../game/types/training";
+import { getGridShotImpactVisual, getGridShotParticleTransform, GRID_SHOT_PARTICLE_DIRECTIONS, GRID_SHOT_SAFE_POSITIONS } from "./gridShotSceneLayout";
 
-const ACTIVE_TARGET_COUNT = 3;
+const ACTIVE_TARGET_COUNT = GRID_SHOT_CONFIG.activeTargetCount;
 const TARGET_Z_MIN = -6.15;
 const TARGET_Z_MAX = -5.78;
 const CENTER_RAY = new THREE.Vector2(0, 0);
-const SAFE_POSITIONS = [
-  [-3.45, 1.25, -5.9],
-  [0, -0.2, -5.86],
-  [3.45, -1.15, -5.94],
-  [-2.3, -1.9, -5.84],
-  [2.35, 1.9, -6.02],
-] as const;
 const PANEL_POSITIONS = Array.from({ length: 15 }, (_, index) => ({
   x: (index % 5 - 2) * 2.48,
   y: (1 - Math.floor(index / 5)) * 2.28 + 0.12,
 }));
 const CEILING_RIBS = [-0.25, -1.85, -3.45, -5.05, -6.65];
-const PARTICLE_DIRECTIONS = [
-  [-0.88, 0.22], [-0.62, 0.72], [-0.08, 0.94], [0.52, 0.77],
-  [0.94, 0.18], [0.72, -0.62], [0.08, -0.92], [-0.7, -0.62],
-] as const;
-
 type SceneTarget = GridShotTargetModel & {
   position: THREE.Vector3;
   bornAt: number;
   hitAt: number;
-  hitAccent: "normal" | "fast";
+  hitAccent: "normal" | "fast" | "combo";
 };
 
 export interface ShotVisualOutcome {
-  fast: boolean;
+  accent: "normal" | "fast" | "combo";
 }
 
 export interface GridShotShotMetadata {
@@ -80,6 +76,7 @@ export type GridShotSceneApi = {
 type ArenaSceneProps = {
   state: TrainingState;
   settings: TrainingSettings;
+  modeSettings: GridShotModeSettings;
   visualMode: boolean;
   debugInput: boolean;
   pointerInputMode: PointerInputMode;
@@ -94,13 +91,16 @@ type ArenaSceneProps = {
 
 type TargetRefs = {
   root: Array<THREE.Group | null>;
+  face: Array<THREE.Group | null>;
   body: Array<THREE.Mesh | null>;
   core: Array<THREE.Mesh | null>;
   contour: Array<THREE.Mesh | null>;
   statusRing: Array<THREE.Mesh | null>;
   spawnRing: Array<THREE.Mesh | null>;
   collider: Array<THREE.Mesh | null>;
+  impactCore: Array<THREE.Mesh | null>;
   impact: Array<THREE.Mesh | null>;
+  impactHalo: Array<THREE.Mesh | null>;
   particles: Array<THREE.Group | null>;
 };
 
@@ -114,7 +114,7 @@ function makeScenePool(): SceneTarget[] {
   }));
   initializeThreeTargets(pool);
   pool.slice(0, ACTIVE_TARGET_COUNT).forEach((target, index) => {
-    const position = SAFE_POSITIONS[index];
+    const position = GRID_SHOT_SAFE_POSITIONS[index];
     target.position.set(position[0], position[1], position[2]);
     target.bornAt = performance.now();
   });
@@ -135,14 +135,14 @@ function placeTarget(target: SceneTarget, pool: SceneTarget[]) {
     if (found) break;
   }
   if (!found) {
-    const fallback = SAFE_POSITIONS[target.id % SAFE_POSITIONS.length];
+    const fallback = GRID_SHOT_SAFE_POSITIONS[target.id % GRID_SHOT_SAFE_POSITIONS.length];
     target.position.set(fallback[0], fallback[1], fallback[2]);
   }
   target.bornAt = performance.now();
   activateTarget(target);
 }
 
-export function ArenaArchitecture({ settings }: { settings: TrainingSettings }) {
+export function ArenaArchitecture({ dynamicGrid = true }: { dynamicGrid?: boolean } = {}) {
   const materials = useMemo(() => ({
     shell: new THREE.MeshStandardMaterial({ color: "#15242c", emissive: "#0b151b", emissiveIntensity: 0.22, roughness: 0.82, metalness: 0.22 }),
     wall: new THREE.MeshStandardMaterial({ color: "#1f3039", emissive: "#0c171d", emissiveIntensity: 0.16, roughness: 0.74, metalness: 0.16 }),
@@ -203,7 +203,7 @@ export function ArenaArchitecture({ settings }: { settings: TrainingSettings }) 
       <mesh geometry={box} material={materials.light} position={[3.7, 3.97, -2.85]} scale={[3.6, 0.035, 0.12]} />
 
       <mesh geometry={box} material={materials.shell} position={[0, -3.75, -2.55]} scale={[14.5, 0.28, 8.6]} />
-      {settings.dynamicGridEnabled && (
+      {dynamicGrid && (
         <Grid
           position={[0, -3.57, -2.45]}
           args={[13.5, 8.2]}
@@ -228,12 +228,12 @@ export function ArenaArchitecture({ settings }: { settings: TrainingSettings }) 
 }
 
 export const GridShotArenaScene = forwardRef<GridShotSceneApi, ArenaSceneProps>(function GridShotArenaScene(
-  { state, settings, visualMode, debugInput, pointerInputMode, inputLifecycle, onShot },
+  { state, settings, modeSettings, visualMode, debugInput, pointerInputMode, inputLifecycle, onShot },
   ref,
 ) {
   const { camera, gl } = useThree();
   const pool = useRef(makeScenePool());
-  const refs = useRef<TargetRefs>({ root: [], body: [], core: [], contour: [], statusRing: [], spawnRing: [], collider: [], impact: [], particles: [] });
+  const refs = useRef<TargetRefs>({ root: [], face: [], body: [], core: [], contour: [], statusRing: [], spawnRing: [], collider: [], impactCore: [], impact: [], impactHalo: [], particles: [] });
   const raycaster = useMemo(() => new THREE.Raycaster(), []);
   const pointerNdc = useMemo(() => new THREE.Vector2(), []);
   const dragging = useRef(false);
@@ -271,6 +271,8 @@ export const GridShotArenaScene = forwardRef<GridShotSceneApi, ArenaSceneProps>(
     onFocusChanged: (focused) => inputRuntime.current.inputLifecycle.onFocusChanged(focused),
     onVisibilityChanged: (visible) => inputRuntime.current.inputLifecycle.onVisibilityChanged(visible),
     debugEnabled: inputRuntime.current.debugInput,
+    yawMin: GRID_SHOT_CONFIG.view.yawMin,
+    yawMax: GRID_SHOT_CONFIG.view.yawMax,
   }, {
     windowTarget: window,
     documentTarget: document,
@@ -280,23 +282,34 @@ export const GridShotArenaScene = forwardRef<GridShotSceneApi, ArenaSceneProps>(
     windowFocused: () => document.hasFocus(),
     documentVisible: () => document.visibilityState === "visible",
   }), [camera, gl]);
+  const targetSize = getGridShotTargetSize(modeSettings.targetSize).scale;
+  const scene = getGridShotScene(modeSettings.sceneId);
+  const particleCount = gridShotParticleCount(modeSettings.hitEffectStyle);
   const targetGeometries = useMemo(() => ({
-    collider: new THREE.SphereGeometry(0.5 * settings.targetSize, 20, 14),
-    body: new THREE.CylinderGeometry(0.49 * settings.targetSize, 0.49 * settings.targetSize, 0.14, 40, 1),
-    core: new THREE.CylinderGeometry(0.115 * settings.targetSize, 0.115 * settings.targetSize, 0.158, 32, 1),
-    contour: new THREE.TorusGeometry(0.455 * settings.targetSize, 0.018, 8, 40),
-    status: new THREE.TorusGeometry(0.55 * settings.targetSize, 0.01, 6, 40),
-    impact: new THREE.TorusGeometry(0.5 * settings.targetSize, 0.025, 8, 40),
-    particle: new THREE.SphereGeometry(0.036, 8, 6),
-    marker: new THREE.BoxGeometry(0.115 * settings.targetSize, 0.022 * settings.targetSize, 0.018),
-  }), [settings.targetSize]);
+    collider: new THREE.SphereGeometry(0.5 * targetSize, 20, 14),
+    body: new THREE.CylinderGeometry(0.49 * targetSize, 0.49 * targetSize, 0.14, 40, 1),
+    core: new THREE.CylinderGeometry(0.115 * targetSize, 0.115 * targetSize, 0.158, 32, 1),
+    contour: new THREE.TorusGeometry(0.455 * targetSize, 0.018, 8, 40),
+    status: new THREE.TorusGeometry(0.55 * targetSize, 0.01, 6, 40),
+    impactCore: new THREE.CircleGeometry(0.48 * targetSize, 40),
+    impact: new THREE.TorusGeometry(0.5 * targetSize, 0.025, 8, 40),
+    impactHalo: new THREE.TorusGeometry(0.58 * targetSize, 0.012, 6, 48),
+    particle: modeSettings.hitEffectStyle === "shards"
+      ? new THREE.TetrahedronGeometry(0.072 * targetSize, 0)
+      : modeSettings.hitEffectStyle === "spiral"
+        ? new THREE.SphereGeometry(0.04 * targetSize, 8, 6)
+        : new THREE.BoxGeometry(0.028 * targetSize, 0.17 * targetSize, 0.018),
+    marker: new THREE.BoxGeometry(0.115 * targetSize, 0.022 * targetSize, 0.018),
+  }), [modeSettings.hitEffectStyle, targetSize]);
   const targetMaterials = useMemo(() => pool.current.map(() => ({
-    body: new THREE.MeshStandardMaterial({ color: settings.targetColor, emissive: "#4d9fa9", emissiveIntensity: 0.2, roughness: 0.56, metalness: 0.3, transparent: true }),
+    body: new THREE.MeshStandardMaterial({ color: scene.target.color, emissive: scene.target.emissive, emissiveIntensity: 0.2, roughness: 0.56, metalness: 0.3, transparent: true }),
     core: new THREE.MeshStandardMaterial({ color: "#f4ffff", emissive: "#aaf9ff", emissiveIntensity: 0.8, roughness: 0.24, metalness: 0.18, transparent: true }),
     spawn: new THREE.MeshBasicMaterial({ color: "#87f4ff", transparent: true, opacity: 0.34, depthWrite: false, toneMapped: false }),
-    impact: new THREE.MeshBasicMaterial({ color: "#58d8e2", transparent: true, opacity: 0.78, depthWrite: false, toneMapped: false }),
-    particle: new THREE.MeshBasicMaterial({ color: "#70dce5", transparent: true, opacity: 0.72, depthWrite: false, toneMapped: false }),
-  })), [settings.targetColor]);
+    impactCore: new THREE.MeshBasicMaterial({ color: "#dffeff", transparent: true, opacity: 0.72, depthWrite: false, toneMapped: false, blending: THREE.AdditiveBlending }),
+    impact: new THREE.MeshBasicMaterial({ color: "#58d8e2", transparent: true, opacity: 0.78, depthWrite: false, toneMapped: false, blending: THREE.AdditiveBlending }),
+    impactHalo: new THREE.MeshBasicMaterial({ color: "#c7fbff", transparent: true, opacity: 0.5, depthWrite: false, toneMapped: false, blending: THREE.AdditiveBlending }),
+    particle: new THREE.MeshBasicMaterial({ color: "#70dce5", transparent: true, opacity: 0.72, depthWrite: false, toneMapped: false, blending: THREE.AdditiveBlending }),
+  })), [scene]);
   const sharedMaterials = useMemo(() => ({
     contour: new THREE.MeshBasicMaterial({ color: "#e9ffff", transparent: true, opacity: 0.68, toneMapped: false }),
     status: new THREE.MeshBasicMaterial({ color: "#65dce7", transparent: true, opacity: 0.12, depthWrite: false, toneMapped: false }),
@@ -325,7 +338,7 @@ export const GridShotArenaScene = forwardRef<GridShotSceneApi, ArenaSceneProps>(
       targetId: target.id,
       targetActivatedAt: target.bornAt,
     });
-    target.hitAccent = outcome?.fast ? "fast" : "normal";
+    target.hitAccent = outcome?.accent ?? "normal";
     return true;
   }, [onShot]);
 
@@ -350,12 +363,13 @@ export const GridShotArenaScene = forwardRef<GridShotSceneApi, ArenaSceneProps>(
 
   useEffect(() => {
     const prior = previousState.current;
+    if (state === "ready") inputController.setAngles(0, 0);
     if (state === "ready" || state === "countdown" || (state === "playing" && (prior === "ready" || prior === "countdown"))) {
       resetPool();
     }
     if (state !== "finishing") finishAmount.current = 0;
     previousState.current = state;
-  }, [resetPool, state]);
+  }, [inputController, resetPool, state]);
 
   useEffect(() => {
     inputController.setAngles(camera.rotation.y, camera.rotation.x);
@@ -433,34 +447,39 @@ export const GridShotArenaScene = forwardRef<GridShotSceneApi, ArenaSceneProps>(
     const exitScale = 1 - finishAmount.current;
 
     for (const target of pool.current) {
-      advanceTargetVisual(target, delta * 1000);
+      const qaFeedbackScale = visualMode && (target.state === "hit" || target.state === "despawning") ? 0.08 : 1;
+      advanceTargetVisual(target, delta * 1000 * qaFeedbackScale);
       const root = refs.current.root[target.id];
+      const face = refs.current.face[target.id];
       const body = refs.current.body[target.id];
       const core = refs.current.core[target.id];
       const contour = refs.current.contour[target.id];
       const statusRing = refs.current.statusRing[target.id];
       const spawnRing = refs.current.spawnRing[target.id];
       const collider = refs.current.collider[target.id];
+      const impactCore = refs.current.impactCore[target.id];
       const impact = refs.current.impact[target.id];
+      const impactHalo = refs.current.impactHalo[target.id];
       const particles = refs.current.particles[target.id];
-      if (!root || !body || !core || !contour || !statusRing || !spawnRing || !collider || !impact || !particles) continue;
+      if (!root || !face || !body || !core || !contour || !statusRing || !spawnRing || !collider || !impactCore || !impact || !impactHalo || !particles) continue;
 
       const isActive = target.state === "active";
       const isHit = target.state === "hit" || target.state === "despawning";
+      const impactVisual = getGridShotImpactVisual(modeSettings.hitEffectStyle, target.hitProgress);
       root.visible = targetsVisible && target.bodyVisible && exitScale > 0.01;
       root.position.copy(target.position);
       if (isHit) {
-        const collapse = Math.max(0, 1 - target.hitProgress);
-        root.scale.set(target.bodyScale * exitScale, target.bodyScale * exitScale, Math.max(0.12, collapse * 0.34));
+        face.scale.set(...impactVisual.targetScale);
       } else {
-        root.scale.setScalar(target.bodyScale * exitScale);
+        face.scale.setScalar(target.bodyScale);
       }
+      root.scale.setScalar(exitScale);
 
       const bodyMaterial = body.material as THREE.MeshStandardMaterial;
       const coreMaterial = core.material as THREE.MeshStandardMaterial;
-      bodyMaterial.opacity = isHit ? Math.max(0, 1 - target.hitProgress * 1.15) : target.bodyOpacity;
+      bodyMaterial.opacity = isHit ? impactVisual.bodyOpacity : target.bodyOpacity;
       bodyMaterial.emissiveIntensity = isHit ? 2.3 * (1 - target.hitProgress) : 0.2;
-      coreMaterial.opacity = isHit ? Math.max(0, 1 - target.hitProgress) : target.bodyOpacity;
+      coreMaterial.opacity = isHit ? impactVisual.coreOpacity : target.bodyOpacity;
       coreMaterial.emissiveIntensity = isHit ? 3.4 * (1 - target.hitProgress) : 0.45 + target.spawnProgress * 0.5;
 
       contour.visible = isActive && target.spawnProgress > 0.1;
@@ -471,14 +490,32 @@ export const GridShotArenaScene = forwardRef<GridShotSceneApi, ArenaSceneProps>(
       (spawnRing.material as THREE.MeshBasicMaterial).opacity = 0.38 * (1 - target.spawnProgress);
       collider.visible = targetsVisible && target.colliderVisible && target.colliderRegistered;
 
-      impact.visible = isHit;
-      impact.scale.setScalar(0.82 + target.hitProgress * 2.05);
-      (impact.material as THREE.MeshBasicMaterial).color.set(target.hitAccent === "fast" ? "#e6b866" : "#58d8e2");
-      (impact.material as THREE.MeshBasicMaterial).opacity = Math.max(0, 0.78 - target.hitProgress);
-      particles.visible = isHit && target.hitProgress < 0.92;
-      particles.scale.setScalar(0.3 + target.hitProgress * 2.4);
-      particles.rotation.z = target.hitProgress * 0.32;
-      (targetMaterials[target.id].particle as THREE.MeshBasicMaterial).color.set(target.hitAccent === "fast" ? "#e7bf75" : "#70dce5");
+      const impactColor = scene.target.normalImpact;
+      impactCore.visible = isHit && impactVisual.flashVisible;
+      impactCore.scale.setScalar(impactVisual.flashScale);
+      (impactCore.material as THREE.MeshBasicMaterial).color.set(impactColor);
+      (impactCore.material as THREE.MeshBasicMaterial).opacity = impactVisual.flashOpacity;
+      impact.visible = isHit && impactVisual.ringVisible;
+      impact.scale.setScalar(impactVisual.ringScale);
+      (impact.material as THREE.MeshBasicMaterial).color.set(impactColor);
+      (impact.material as THREE.MeshBasicMaterial).opacity = impactVisual.ringOpacity;
+      impactHalo.visible = false;
+      (impactHalo.material as THREE.MeshBasicMaterial).color.set(impactColor);
+      (impactHalo.material as THREE.MeshBasicMaterial).opacity = 0;
+      particles.visible = isHit && particleCount > 0 && impactVisual.particlesVisible;
+      particles.rotation.z = 0;
+      particles.children.forEach((child, index) => {
+        const particle = child as THREE.Mesh;
+        const transform = getGridShotParticleTransform(modeSettings.hitEffectStyle, index, target.hitProgress);
+        if (!transform) return;
+        particle.position.set(transform.x * targetSize, transform.y * targetSize, 0.13 + (index % 3) * 0.012);
+        particle.rotation.z = transform.rotation;
+        particle.scale.set(transform.scaleX, transform.scaleY, 1);
+        particle.visible = transform.visible;
+      });
+      const particleMaterial = targetMaterials[target.id].particle as THREE.MeshBasicMaterial;
+      particleMaterial.color.set(impactColor);
+      particleMaterial.opacity = impactVisual.particleOpacity;
     }
 
     const lightFade = 1 - finishAmount.current * 0.62;
@@ -493,9 +530,9 @@ export const GridShotArenaScene = forwardRef<GridShotSceneApi, ArenaSceneProps>(
 
   return (
     <>
-      <PerspectiveCamera makeDefault fov={settings.fov} position={[0, 0.2, 1.2]} near={0.05} far={48} />
-      <color attach="background" args={["#081119"]} />
-      {settings.fogEnabled && <fog attach="fog" args={["#081119", 10, 27]} />}
+      <PerspectiveCamera makeDefault fov={scene.camera.fov} position={scene.camera.position} near={0.05} far={48} />
+      <color attach="background" args={[scene.environment.background]} />
+      <fog attach="fog" args={[scene.environment.fog, scene.environment.fogNear, scene.environment.fogFar]} />
 
       <ambientLight intensity={settings.lowSpec ? 0.34 : 0.42} color="#b8cad2" />
       <hemisphereLight args={["#7f9eaa", "#10151a", settings.lowSpec ? 0.45 : 0.62]} />
@@ -504,7 +541,7 @@ export const GridShotArenaScene = forwardRef<GridShotSceneApi, ArenaSceneProps>(
       <pointLight ref={rimLightLeft} position={[-6.2, 2.2, -2.2]} color="#3bb7c8" intensity={5.2} distance={8} decay={2} />
       <pointLight ref={rimLightRight} position={[6.2, 2.2, -2.2]} color="#3bb7c8" intensity={5.2} distance={8} decay={2} />
 
-      <ArenaArchitecture settings={settings} />
+      <ArenaArchitecture dynamicGrid={scene.environment.dynamicGrid} />
 
       {pool.current.map((target) => (
         <group
@@ -519,6 +556,7 @@ export const GridShotArenaScene = forwardRef<GridShotSceneApi, ArenaSceneProps>(
             material={sharedMaterials.collider}
             userData={{ poolIndex: target.poolIndex }}
           />
+          <group ref={(value) => { refs.current.face[target.id] = value; }}>
           <mesh
             ref={(value) => { refs.current.body[target.id] = value; }}
             geometry={targetGeometries.body}
@@ -540,8 +578,8 @@ export const GridShotArenaScene = forwardRef<GridShotSceneApi, ArenaSceneProps>(
               geometry={targetGeometries.marker}
               material={sharedMaterials.marker}
               position={[
-                Math.cos(index * Math.PI / 2) * 0.31 * settings.targetSize,
-                Math.sin(index * Math.PI / 2) * 0.31 * settings.targetSize,
+                Math.cos(index * Math.PI / 2) * 0.31 * targetSize,
+                Math.sin(index * Math.PI / 2) * 0.31 * targetSize,
                 0.086,
               ]}
               rotation={[0, 0, index * Math.PI / 2]}
@@ -569,6 +607,7 @@ export const GridShotArenaScene = forwardRef<GridShotSceneApi, ArenaSceneProps>(
             position={[0, 0, 0.075]}
             raycast={() => undefined}
           />
+          </group>
           <mesh
             ref={(value) => { refs.current.impact[target.id] = value; }}
             geometry={targetGeometries.impact}
@@ -577,14 +616,30 @@ export const GridShotArenaScene = forwardRef<GridShotSceneApi, ArenaSceneProps>(
             visible={false}
             raycast={() => undefined}
           />
+          <mesh
+            ref={(value) => { refs.current.impactCore[target.id] = value; }}
+            geometry={targetGeometries.impactCore}
+            material={targetMaterials[target.id].impactCore}
+            position={[0, 0, 0.092]}
+            visible={false}
+            raycast={() => undefined}
+          />
+          <mesh
+            ref={(value) => { refs.current.impactHalo[target.id] = value; }}
+            geometry={targetGeometries.impactHalo}
+            material={targetMaterials[target.id].impactHalo}
+            position={[0, 0, 0.095]}
+            visible={false}
+            raycast={() => undefined}
+          />
           <group ref={(value) => { refs.current.particles[target.id] = value; }} visible={false}>
-            {PARTICLE_DIRECTIONS.slice(0, settings.particleQuality === "low" ? 4 : settings.particleQuality === "off" ? 0 : 8).map((direction, index) => (
+            {GRID_SHOT_PARTICLE_DIRECTIONS.slice(0, particleCount).map((direction, index) => (
               <mesh
                 key={`particle-${index}`}
                 geometry={targetGeometries.particle}
                 material={targetMaterials[target.id].particle}
-                position={[direction[0] * 0.5, direction[1] * 0.5, 0.12 + (index % 2) * 0.025]}
-                rotation={[0, 0, index * 0.76]}
+                position={[direction[0] * 0.24, direction[1] * 0.24, 0.13 + (index % 3) * 0.012]}
+                rotation={[0, 0, Math.atan2(direction[1], direction[0]) - Math.PI / 2]}
                 raycast={() => undefined}
               />
             ))}

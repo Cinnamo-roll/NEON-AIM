@@ -34,6 +34,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { create } from "zustand";
 import { GridShotTrainingPage } from "./pages/GridShotTrainingPage";
+import { TrainingCrosshair } from "./components/training/Crosshair";
 import type {
   GridShotHistoryRecord,
   TrainingSettings,
@@ -45,7 +46,12 @@ import {
 } from "./game/sensitivity/sensitivity";
 import { BrowserFrameMonitor } from "./game/performance/PerformanceMonitor";
 import { usePerformanceStore } from "./game/performance/performanceStore";
-import { DEFAULT_TRAINING_SETTINGS } from "./game/settings/trainingSettings";
+import { sanitizeTrainingSettings } from "./game/settings/trainingSettings";
+import { CROSSHAIR_PRESETS, matchCrosshairPreset } from "./game/settings/crosshairPresets";
+import {
+  sanitizeGridShotModeSettings,
+  type GridShotModeSettings,
+} from "./game/modes/gridShot/gridShotConfig";
 import { SettingsWorkspace } from "./pages/SettingsWorkspace";
 import { GridShotResultPage } from "./pages/GridShotResultPage";
 import { GridShotSettingsPreview } from "./components/training/GridShotSettingsPreview";
@@ -83,16 +89,17 @@ type AppState = {
   page: Page;
   mode: ModeId;
   settings: SettingsData;
+  gridShotSettings: GridShotModeSettings;
   results: Result[];
   gridResult?: GridShotHistoryRecord;
   previousGridResult?: GridShotHistoryRecord;
   setPage: (p: Page) => void;
   setMode: (m: ModeId) => void;
   updateSettings: (v: Partial<SettingsData>) => void;
+  updateGridShotSettings: (v: Partial<GridShotModeSettings>) => void;
   saveResult: (r: Result) => void;
   setGridResult: (r: GridShotHistoryRecord, p?: GridShotHistoryRecord) => void;
 };
-const initialSettings: SettingsData = DEFAULT_TRAINING_SETTINGS;
 const load = <T,>(key: string, fallback: T): T => {
   try {
     return JSON.parse(localStorage.getItem(key) || "") as T;
@@ -100,14 +107,18 @@ const load = <T,>(key: string, fallback: T): T => {
     return fallback;
   }
 };
-const loadedSettings: SettingsData = {
-  ...initialSettings,
-  ...load<Partial<SettingsData>>("neon-settings", {}),
-};
+const rawLoadedSettings = load<Record<string, unknown>>("neon-settings", {});
+const loadedSettings = sanitizeTrainingSettings(rawLoadedSettings);
 const normalizedLoadedSettings: SettingsData = {
   ...loadedSettings,
   ...normalizeNeonInputSettings(loadedSettings),
 };
+const loadedGridShotSettings = sanitizeGridShotModeSettings({
+  hitVolume: rawLoadedSettings.hitVolume,
+  missVolume: rawLoadedSettings.missVolume,
+  comboVolume: rawLoadedSettings.comboVolume,
+  ...load<Record<string, unknown>>("neon-grid-shot-settings", {}),
+});
 const pathPage = (): Page =>
   import.meta.env.DEV && location.pathname.startsWith("/dev/grid-shot-qa")
     ? "qa"
@@ -133,10 +144,12 @@ const useApp = create<AppState>((set) => ({
   page: pathPage(),
   mode: "grid",
   settings: normalizedLoadedSettings,
+  gridShotSettings: loadedGridShotSettings,
   results: load("neon-results", []),
   setPage: (page) => {
     history.pushState({}, "", pagePath[page]);
     set({ page });
+    window.scrollTo({ top: 0, left: 0, behavior: "instant" });
   },
   setMode: (mode) => set({ mode }),
   updateSettings: (v) =>
@@ -145,6 +158,12 @@ const useApp = create<AppState>((set) => ({
       const settings = { ...merged, ...normalizeNeonInputSettings(merged) };
       localStorage.setItem("neon-settings", JSON.stringify(settings));
       return { settings };
+    }),
+  updateGridShotSettings: (v) =>
+    set((state) => {
+      const gridShotSettings = sanitizeGridShotModeSettings({ ...state.gridShotSettings, ...v });
+      localStorage.setItem("neon-grid-shot-settings", JSON.stringify(gridShotSettings));
+      return { gridShotSettings };
     }),
   saveResult: (r) =>
     set((s) => {
@@ -256,13 +275,6 @@ function Nav() {
           </button>
         ))}
       </nav>
-      <div className="profile">
-        <div>NA</div>
-        <span>
-          <b>本地档案</b>
-          <small>准备开始训练</small>
-        </span>
-      </div>
     </aside>
   );
 }
@@ -397,7 +409,6 @@ function FutureFeature({ icon: Icon, title, description }: { icon: typeof Zap; t
 function ModesPage() {
   const setPage = useApp((s) => s.setPage),
     setMode = useApp((s) => s.setMode),
-    results = useApp((s) => s.results),
     settings = useApp((s) => s.settings);
   const [selectedGame, setSelectedGame] = useState("all");
   const [selectedDifficulty, setSelectedDifficulty] = useState<"all" | TrainingDifficultyId>("all");
@@ -487,7 +498,6 @@ function ModesPage() {
               </header>
               <div className="catalog-grid">
                 {group.entries.map((m) => {
-                  const best = m.playableMode ? Math.max(0, ...results.filter((r) => r.mode === m.playableMode).map((r) => r.score)) : 0;
                   return (
                     <article className={`catalog-card ${m.available ? "available" : "coming-soon"}`} key={m.id} style={{ "--accent": m.color } as React.CSSProperties}>
                       <CatalogScenePreview training={m} settings={settings} />
@@ -514,7 +524,6 @@ function ModesPage() {
                           setPage("game");
                         }}>开始训练 <ChevronRight size={15} /></button>}
                       </div>
-                      {m.available && <small className="catalog-best">历史最佳 {best || "—"}</small>}
                     </article>
                   );
                 })}
@@ -756,7 +765,7 @@ function LegacyGamePage() {
     <div className="game">
       <Canvas
         dpr={[1, settings.lowSpec ? 1.2 : 1.75]}
-        camera={{ fov: settings.fov, position: [0, 0, 2] }}
+        camera={{ fov: 82, position: [0, 0, 2] }}
       >
         <Arena targets={targets} onHit={hit} mode={mode} />
       </Canvas>
@@ -815,15 +824,20 @@ function LegacyGamePage() {
 }
 function GamePage() {
   const settings = useApp((s) => s.settings);
+  const gridShotSettings = useApp((s) => s.gridShotSettings);
+  const updateSettings = useApp((s) => s.updateSettings);
+  const updateGridShotSettings = useApp((s) => s.updateGridShotSettings);
   const setPage = useApp((s) => s.setPage);
   const setGridResult = useApp((s) => s.setGridResult);
   return (
     <GridShotTrainingPage
       settings={settings}
+      gridShotSettings={gridShotSettings}
       onHome={() => setPage("home")}
-      onSettings={() => setPage("settings")}
-      onResult={(record, previous) => {
-        setGridResult(record, previous);
+      onApplySettings={updateSettings}
+      onApplyGridShotSettings={updateGridShotSettings}
+      onResult={(record) => {
+        setGridResult(record);
         setPage("results");
       }}
     />
@@ -832,27 +846,19 @@ function GamePage() {
 
 function GridShotQaPage() {
   const settings = useApp((state) => state.settings);
+  const gridShotSettings = useApp((state) => state.gridShotSettings);
+  const updateSettings = useApp((state) => state.updateSettings);
+  const updateGridShotSettings = useApp((state) => state.updateGridShotSettings);
   const setPage = useApp((state) => state.setPage);
   const [record, setRecord] = useState<GridShotHistoryRecord>();
   const [run, setRun] = useState(0);
-  if (record) return <GridShotResultPage record={record} onAgain={() => { setRecord(undefined); setRun((value) => value + 1); }} onHome={() => setPage("home")} onModes={() => setPage("modes")} />;
-  return <GridShotTrainingPage key={run} qaMode settings={settings} onHome={() => setPage("home")} onSettings={() => setPage("settings")} onResult={(result) => setRecord(result)} />;
+  if (record) return <GridShotResultPage record={record} onAgain={() => { setRecord(undefined); setRun((value) => value + 1); }} onTrainingHome={() => setPage("modes")} />;
+  return <GridShotTrainingPage key={run} qaMode settings={settings} gridShotSettings={gridShotSettings} onHome={() => setPage("home")} onApplySettings={updateSettings} onApplyGridShotSettings={updateGridShotSettings} onResult={(result) => setRecord(result)} />;
 }
 
 function CrosshairUI() {
   const s = useApp((x) => x.settings);
-  return (
-    <div
-      className={`crosshair ${s.crosshair}`}
-      style={{ "--c": s.crosshairColor } as React.CSSProperties}
-    >
-      <i />
-      <i />
-      <i />
-      <i />
-      <b />
-    </div>
-  );
+  return <TrainingCrosshair settings={s} />;
 }
 
 function LegacyResults() {
@@ -998,7 +1004,7 @@ function LegacyEnhancedResults() {
   );
 }
 
-function Results(){const record=useApp(s=>s.gridResult),setPage=useApp(s=>s.setPage);return <GridShotResultPage record={record} onAgain={()=>setPage('game')} onHome={()=>setPage('home')} onModes={()=>setPage('modes')}/>}
+function Results(){const record=useApp(s=>s.gridResult),setPage=useApp(s=>s.setPage);return <GridShotResultPage record={record} onAgain={()=>setPage('game')} onTrainingHome={()=>setPage('modes')}/>}
 void LegacyEnhancedResults;
 function LegacySettingsPage() {
   const s = useApp((x) => x.settings),
@@ -1054,19 +1060,6 @@ function LegacySettingsPage() {
               }
             />
           </label>
-          <label>
-            回报率
-            <select
-              value={s.pollingRate}
-              onChange={(e) => update({ pollingRate: Number(e.target.value) })}
-            >
-              {[125, 250, 500, 1000, 2000, 4000, 8000].map((v) => (
-                <option key={v} value={v}>
-                  {v} Hz
-                </option>
-              ))}
-            </select>
-          </label>
           <Slider
             label="垂直灵敏度比例"
             value={s.verticalRatio}
@@ -1087,14 +1080,6 @@ function LegacySettingsPage() {
               <b>{canonical.radiansPerMouseCount.toExponential(3)}</b>
             </span>
           </div>
-          <Slider
-            label="视野范围 FOV"
-            value={s.fov}
-            min={60}
-            max={110}
-            step={1}
-            onChange={(v) => update({ fov: v })}
-          />
           <label className="toggle">
             反转 Y 轴
             <span
@@ -1118,13 +1103,13 @@ function LegacySettingsPage() {
             />
           </label>
           <div className="segmented">
-            {["cross", "dot", "circle"].map((v) => (
+            {CROSSHAIR_PRESETS.slice(0, 4).map((preset) => (
               <button
-                className={s.crosshair === v ? "active" : ""}
-                onClick={() => update({ crosshair: v })}
-                key={v}
+                className={matchCrosshairPreset(s) === preset.id ? "active" : ""}
+                onClick={() => update(preset.parameters)}
+                key={preset.id}
               >
-                {v}
+                {preset.label}
               </button>
             ))}
           </div>
@@ -1160,15 +1145,6 @@ function LegacySettingsPage() {
             step={0.05}
             onChange={(v) => update({ crosshairOpacity: v })}
           />
-          <label className="toggle">
-            显示命中标记
-            <span
-              className={s.showHitMarker ? "on" : ""}
-              onClick={() => update({ showHitMarker: !s.showHitMarker })}
-            >
-              <i />
-            </span>
-          </label>
         </Panel>
         <Panel
           title="音频"

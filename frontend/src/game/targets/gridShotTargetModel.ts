@@ -2,6 +2,7 @@ import type { TargetState } from "../types/training";
 
 export const GRID_SHOT_ACTIVE_TARGETS = 3;
 export const GRID_SHOT_POOL_SIZE = 10;
+export const GRID_SHOT_HIT_EFFECT_DURATION_MS = 300;
 
 export interface GridShotTargetModel {
   id: number;
@@ -66,7 +67,7 @@ export function advanceTargetVisual(target: GridShotTargetModel, deltaMs: number
     return;
   }
   if (target.state !== "hit" && target.state !== "despawning") return;
-  target.hitProgress = Math.min(1, target.hitProgress + deltaMs / 110);
+  target.hitProgress = Math.min(1, target.hitProgress + deltaMs / GRID_SHOT_HIT_EFFECT_DURATION_MS);
   target.despawnProgress = target.hitProgress;
   target.state = target.hitProgress < 0.55 ? "hit" : "despawning";
   target.bodyScale = 0.8 * (1 - target.hitProgress);

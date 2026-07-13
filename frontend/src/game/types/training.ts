@@ -47,39 +47,34 @@ export interface GridShotHistoryRecord extends Omit<
 export interface TrainingSettings {
   sensitivity: number;
   mouseDpi: number;
-  pollingRate: number;
   horizontalRatio: number;
   verticalRatio: number;
-  fov: number;
   invertX: boolean;
   invertY: boolean;
   volume: number;
   muted: boolean;
-  crosshair: string;
   crosshairColor: string;
+  crosshairTop: boolean;
+  crosshairBottom: boolean;
+  crosshairLeft: boolean;
+  crosshairRight: boolean;
+  crosshairCenterDot: boolean;
+  crosshairRing: boolean;
   crosshairThickness: number;
   crosshairLength: number;
   crosshairGap: number;
+  crosshairDotSize: number;
+  crosshairRingDiameter: number;
   crosshairOpacity: number;
-  showHitMarker: boolean;
   lowSpec: boolean;
   antialiasEnabled: boolean;
   fpsLimit: import("../performance/frameRate").FpsLimit;
   renderScale: number;
   dprMode: "auto" | 1 | 1.25 | 1.5 | 1.75 | 2;
-  uiScale: number;
   graphicsPreset: "low" | "medium" | "high" | "ultra" | "custom";
-  particleQuality: "off" | "low" | "high";
-  fogEnabled: boolean;
-  dynamicGridEnabled: boolean;
   hudScale: number;
   hudOpacity: number;
   showFps: boolean;
-  targetColor: string;
-  targetSize: number;
-  hitVolume: number;
-  missVolume: number;
-  comboVolume: number;
 }
 import type {
   GridShotEvent,
