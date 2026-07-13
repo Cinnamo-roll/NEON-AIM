@@ -1,13 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
   canonicalFromGame,
+  canonicalFromProfile,
   createNeonInputSensitivity,
+  gameProfilesForDisplay,
   horizontalToVerticalFov,
   NEON_YAW_DEGREES_PER_COUNT,
   normalizeNeonInputSettings,
   profiles,
   roundSensitivity,
   sensitivityFromCanonical,
+  sensitivityFromProfile,
   verticalToHorizontalFov,
 } from "./sensitivity";
 
@@ -67,10 +70,28 @@ describe("canonical sensitivity", () => {
 
   it("round trips every supported FPS hipfire profile", () => {
     profiles.forEach((profile) => {
-      expect(profile.yawCoefficient).toBeTypeOf("number");
-      const canonical = canonicalFromGame(1.25, 800, profile.yawCoefficient!);
-      expect(sensitivityFromCanonical(canonical, profile.yawCoefficient!)).toBeCloseTo(1.25, 10);
+      const sensitivity = profile.id === "pubg" ? 43.7 : 1.25;
+      const canonical = canonicalFromProfile(sensitivity, 800, profile);
+      expect(sensitivityFromProfile(canonical, profile)).toBeCloseTo(sensitivity, 10);
     });
+  });
+
+  it("uses PUBG's exponential general-sensitivity curve in both directions", () => {
+    const pubg = profiles.find((profile) => profile.id === "pubg")!;
+    const atFifty = canonicalFromProfile(50, 800, pubg);
+    const expected = canonicalFromGame(1, 800, 0.02);
+    expect(atFifty.radiansPerMouseCount).toBeCloseTo(expected.radiansPerMouseCount, 12);
+    expect(atFifty.cmPer360).toBeCloseTo(expected.cmPer360, 10);
+    expect(sensitivityFromProfile(expected, pubg)).toBeCloseTo(50, 10);
+  });
+
+  it("converts CS2 hipfire to PUBG and back without treating PUBG as linear", () => {
+    const cs2 = profiles.find((profile) => profile.id === "cs2")!;
+    const pubg = profiles.find((profile) => profile.id === "pubg")!;
+    const cs2Canonical = canonicalFromProfile(1, 800, cs2);
+    const pubgSensitivity = sensitivityFromProfile(cs2Canonical, pubg);
+    expect(pubgSensitivity).toBeCloseTo(52.069634, 6);
+    expect(sensitivityFromProfile(canonicalFromProfile(pubgSensitivity, 800, pubg), cs2)).toBeCloseTo(1, 10);
   });
 
   it("matches known cross-game hipfire ratios", () => {
@@ -82,5 +103,26 @@ describe("canonical sensitivity", () => {
     expect(sensitivityFromCanonical(canonical, valorant.yawCoefficient!)).toBeCloseTo(0.314285714, 8);
     expect(sensitivityFromCanonical(canonical, apex.yawCoefficient!)).toBeCloseTo(1, 10);
     expect(sensitivityFromCanonical(canonical, overwatch.yawCoefficient!)).toBeCloseTo(3.333333333, 8);
+  });
+
+  it("keeps Delta Force and CrossFire raw hipfire aligned with the Source baseline", () => {
+    const cs2 = profiles.find((profile) => profile.id === "cs2")!;
+    const deltaForce = profiles.find((profile) => profile.id === "delta-force")!;
+    const crossFire = profiles.find((profile) => profile.id === "crossfire")!;
+    const canonical = canonicalFromGame(1.37, 800, cs2.yawCoefficient!);
+    expect(sensitivityFromCanonical(canonical, deltaForce.yawCoefficient!)).toBeCloseTo(1.37, 10);
+    expect(sensitivityFromCanonical(canonical, crossFire.yawCoefficient!)).toBeCloseTo(1.37, 10);
+  });
+
+  it("keeps profile ids unique and user-facing names concise", () => {
+    expect(new Set(profiles.map((profile) => profile.id)).size).toBe(profiles.length);
+    expect(profiles.find((profile) => profile.id === "fortnite")?.name).toBe("Fortnite");
+    expect(profiles.find((profile) => profile.id === "pubg")?.sensitivityStep).toBe(0.1);
+  });
+
+  it("keeps NEON first and sorts external games alphabetically for selectors", () => {
+    expect(gameProfilesForDisplay[0].id).toBe("neon");
+    const externalNames = gameProfilesForDisplay.slice(1).map((profile) => profile.name);
+    expect(externalNames).toEqual([...externalNames].sort((left, right) => left.localeCompare(right, "en", { sensitivity: "base" })));
   });
 });

@@ -142,7 +142,7 @@ function placeTarget(target: SceneTarget, pool: SceneTarget[]) {
   activateTarget(target);
 }
 
-function ArenaArchitecture({ settings }: { settings: TrainingSettings }) {
+export function ArenaArchitecture({ settings }: { settings: TrainingSettings }) {
   const materials = useMemo(() => ({
     shell: new THREE.MeshStandardMaterial({ color: "#15242c", emissive: "#0b151b", emissiveIntensity: 0.22, roughness: 0.82, metalness: 0.22 }),
     wall: new THREE.MeshStandardMaterial({ color: "#1f3039", emissive: "#0c171d", emissiveIntensity: 0.16, roughness: 0.74, metalness: 0.16 }),

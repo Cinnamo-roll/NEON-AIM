@@ -138,10 +138,22 @@ export function applyGraphicsPreset(
     : { ...settings, ...GRAPHICS_PRESETS[preset] };
 }
 
+const PRESET_CONTROLLED_GRAPHICS_KEYS: ReadonlyArray<keyof TrainingSettings> = [
+  "renderScale",
+  "dprMode",
+  "particleQuality",
+  "fogEnabled",
+  "dynamicGridEnabled",
+  "lowSpec",
+  "antialiasEnabled",
+];
+
 export function patchCustomGraphics<K extends keyof TrainingSettings>(
   settings: TrainingSettings,
   key: K,
   value: TrainingSettings[K],
 ) {
-  return { ...settings, [key]: value, graphicsPreset: "custom" as const };
+  return PRESET_CONTROLLED_GRAPHICS_KEYS.includes(key)
+    ? { ...settings, [key]: value, graphicsPreset: "custom" as const }
+    : { ...settings, [key]: value };
 }

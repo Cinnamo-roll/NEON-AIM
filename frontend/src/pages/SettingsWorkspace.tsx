@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useId, useMemo, useRef, useState } from "react";
 import {
   Accessibility,
   Check,
   ChevronDown,
+  ChevronUp,
   Copy,
   Crosshair as CrosshairIcon,
   Database,
@@ -16,13 +17,16 @@ import {
   Volume2,
 } from "lucide-react";
 import { TrainingCrosshair } from "../components/training/Crosshair";
+import { GridShotSettingsPreview } from "../components/training/GridShotSettingsPreview";
+import { GameIcon } from "../components/GameIcon";
 import { FPS_OPTIONS, type FpsLimit } from "../game/performance/frameRate";
 import {
-  canonicalFromGame,
+  canonicalFromProfile,
   createNeonInputSensitivity,
+  gameProfilesForDisplay,
   profiles,
   roundSensitivity,
-  sensitivityFromCanonical,
+  sensitivityFromProfile,
 } from "../game/sensitivity/sensitivity";
 import {
   applyGraphicsPreset,
@@ -59,7 +63,33 @@ function SettingRow({ label, help, value, children }: { label: string; help: str
 }
 
 function NumberControl({ label, value, min, max, step = 1, onChange }: { label: string; value: number; min: number; max: number; step?: number; onChange: (value: number) => void }) {
-  return <input className="number-control" aria-label={label} type="number" value={value} min={min} max={max} step={step} onChange={(event) => onChange(Number(event.target.value))} />;
+  const precision = step.toString().split(".")[1]?.length ?? 0;
+  const adjust = (direction: -1 | 1) => {
+    const next = Number((value + direction * step).toFixed(precision));
+    onChange(Math.min(max, Math.max(min, next)));
+  };
+  return (
+    <span className="number-control-shell">
+      <input
+        className="number-control"
+        aria-label={label}
+        type="number"
+        inputMode="decimal"
+        value={value}
+        min={min}
+        max={max}
+        step={step}
+        onChange={(event) => {
+          const next = event.currentTarget.valueAsNumber;
+          if (Number.isFinite(next)) onChange(Math.min(max, Math.max(min, next)));
+        }}
+      />
+      <span className="number-control-stepper">
+        <button type="button" aria-label={`增加${label}`} disabled={value >= max} onClick={() => adjust(1)}><ChevronUp size={12} /></button>
+        <button type="button" aria-label={`减少${label}`} disabled={value <= min} onClick={() => adjust(-1)}><ChevronDown size={12} /></button>
+      </span>
+    </span>
+  );
 }
 
 function RangeControl({ label, value, min, max, step, onChange }: { label: string; value: number; min: number; max: number; step: number; onChange: (value: number) => void }) {
@@ -69,6 +99,107 @@ function RangeControl({ label, value, min, max, step, onChange }: { label: strin
 
 function SelectControl({ label, value, onChange, children }: { label: string; value: string | number; onChange: (value: string) => void; children: React.ReactNode }) {
   return <span className="select-control"><select aria-label={label} value={String(value)} onChange={(event) => onChange(event.target.value)}>{children}</select><ChevronDown size={15} /></span>;
+}
+
+const gameTriggerLabels: Record<string, string> = {
+  cs2: "Counter-Strike 2",
+  "call-of-duty": "Call of Duty",
+  "rainbow-six": "Rainbow Six",
+  pubg: "PUBG",
+};
+
+function GameSelectControl({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const menuId = useId();
+  const selected = gameProfilesForDisplay.find((profile) => profile.id === value) ?? gameProfilesForDisplay[0];
+  const groupLabel = (index: number) => gameProfilesForDisplay[index].id === "neon" ? "TRAINER" : gameProfilesForDisplay[index].name.charAt(0).toUpperCase();
+
+  useEffect(() => {
+    if (!open) return;
+    const closeOutside = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener("pointerdown", closeOutside);
+    return () => document.removeEventListener("pointerdown", closeOutside);
+  }, [open]);
+
+  const focusOption = (index: number) => {
+    window.requestAnimationFrame(() => {
+      rootRef.current?.querySelectorAll<HTMLButtonElement>("[data-game-option]")[index]?.focus();
+    });
+  };
+  const openMenu = () => {
+    const selectedIndex = Math.max(0, gameProfilesForDisplay.findIndex((profile) => profile.id === value));
+    setOpen(true);
+    focusOption(selectedIndex);
+  };
+  const handleOptionKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>, index: number) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      setOpen(false);
+      rootRef.current?.querySelector<HTMLButtonElement>(".game-select-trigger")?.focus();
+    } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      const direction = event.key === "ArrowDown" ? 1 : -1;
+      focusOption((index + direction + gameProfilesForDisplay.length) % gameProfilesForDisplay.length);
+    } else if (event.key === "Home" || event.key === "End") {
+      event.preventDefault();
+      focusOption(event.key === "Home" ? 0 : gameProfilesForDisplay.length - 1);
+    }
+  };
+
+  return (
+    <div className={`game-select-control ${open ? "open" : ""}`} ref={rootRef}>
+      <button
+        type="button"
+        className="game-select-trigger"
+        aria-label={label}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-controls={menuId}
+        onClick={() => open ? setOpen(false) : openMenu()}
+        onKeyDown={(event) => {
+          if (!open && (event.key === "ArrowDown" || event.key === "Enter" || event.key === " ")) {
+            event.preventDefault();
+            openMenu();
+          } else if (event.key === "Escape") {
+            setOpen(false);
+          }
+        }}
+      >
+        <GameIcon gameId={selected.id} />
+        <span><b>{gameTriggerLabels[selected.id] ?? selected.name}</b><small>{selected.id === "neon" ? "TRAINER" : `GAME · ${selected.name.charAt(0).toUpperCase()}`}</small></span>
+        <ChevronDown size={15} />
+      </button>
+      {open && (
+        <div className="game-select-menu" id={menuId} role="listbox" aria-label={`${label}列表`}>
+          {gameProfilesForDisplay.map((profile, index) => {
+            const group = groupLabel(index);
+            const previousGroup = index > 0 ? groupLabel(index - 1) : "";
+            return (
+              <Fragment key={profile.id}>
+                {group !== previousGroup && <div className="game-select-group" aria-hidden="true">{group}</div>}
+                <button
+                  type="button"
+                  role="option"
+                  aria-selected={profile.id === value}
+                  data-game-option
+                  className={profile.id === value ? "selected" : ""}
+                  onClick={() => { onChange(profile.id); setOpen(false); }}
+                  onKeyDown={(event) => handleOptionKeyDown(event, index)}
+                >
+                  <GameIcon gameId={profile.id} />
+                  <span><b>{profile.name}</b><small>{profile.id === "neon" ? "NEON TRAINER" : profile.status === "verified" ? "VERIFIED" : "REFERENCE"}</small></span>
+                  {profile.id === value && <Check size={15} />}
+                </button>
+              </Fragment>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function Toggle({ label, checked, onChange }: { label: string; checked: boolean; onChange: (checked: boolean) => void }) {
@@ -101,30 +232,27 @@ function CrosshairTypePicker({ settings, onChange }: { settings: TrainingSetting
   );
 }
 
-function SettingsPreview({ tab, settings, effectiveDpr }: { tab: Tab; settings: TrainingSettings; effectiveDpr: number }) {
-  const qualityLabel = settings.graphicsPreset === "low" ? "性能" : settings.graphicsPreset === "medium" ? "均衡" : settings.graphicsPreset === "high" ? "高画质" : settings.graphicsPreset === "ultra" ? "极致" : "自定义";
+function SettingsPreview({ tab, settings }: { tab: Tab; settings: TrainingSettings }) {
+  if (tab !== "graphics" && tab !== "hud") return null;
   return (
-    <aside className="settings-inspector settings-preview-panel">
+    <aside className="settings-inspector settings-preview-panel" aria-label={tab === "graphics" ? "画面效果预览" : "训练显示预览"}>
       <div className="inspector-heading"><Eye size={18} /><div><small>LIVE PREVIEW</small><h3>效果预览</h3></div></div>
+      <div className="preview-reference-note">仅供参考 · 实际效果以全屏训练为准</div>
       {tab === "graphics" ? <>
-        <div className={`graphics-live-preview ${settings.fogEnabled ? "with-fog" : ""} ${settings.lowSpec ? "lean" : "full"}`} style={{ "--preview-fov": `${0.82 + (settings.fov - 60) / 300}` } as React.CSSProperties}>
-          <div className="preview-ceiling" />
-          <div className="preview-wall left" /><div className="preview-wall center" /><div className="preview-wall right" />
-          {settings.dynamicGridEnabled && <div className="preview-grid" />}
-          <i className="preview-target one" style={{ background: settings.targetColor }} /><i className="preview-target two" style={{ background: settings.targetColor }} /><i className="preview-target three" style={{ background: settings.targetColor }} />
+        <div className="grid-shot-settings-preview graphics-settings-preview">
+          <div className="preview-stage-label"><span>GRID SHOT</span><b>LIVE</b></div>
+          <GridShotSettingsPreview settings={settings} />
           <TrainingCrosshair settings={settings} />
         </div>
-        <div className="preview-facts"><span>FOV<b>{settings.fov.toFixed(0)}°</b></span><span>清晰倍率<b>{effectiveDpr.toFixed(2)}×</b></span><span>画质<b>{qualityLabel}</b></span></div>
-        <p className="preview-help">预览会同步显示 FOV、环境雾、地面网格、灯光层次和目标颜色。</p>
-      </> : tab === "hud" ? <>
-        <div className="training-live-preview" style={{ "--preview-hud-scale": settings.hudScale, "--preview-hud-opacity": settings.hudOpacity, "--preview-target-scale": settings.targetSize } as React.CSSProperties}>
-          <div className="preview-hud"><span>SCORE<b>12,480</b></span><strong>00:38</strong><span>ACCURACY<b>91.4%</b></span></div>
-          <i className="training-preview-target" style={{ background: settings.targetColor }} />
+      </> : <>
+        <div className="grid-shot-settings-preview training-settings-preview" style={{ "--preview-hud-scale": settings.hudScale, "--preview-hud-opacity": settings.hudOpacity } as React.CSSProperties}>
+          <div className="preview-stage-label"><span>TRAINING HUD</span><b>LIVE</b></div>
+          <GridShotSettingsPreview settings={settings} />
+          <div className="preview-hud"><span>SCORE<b>12,480</b><em>COMBO ×18</em></span><strong>00:38<em>GRID SHOT</em></strong><span>ACCURACY<b>91.4%</b><em>138 TPM</em></span></div>
           <TrainingCrosshair settings={settings} />
           {settings.showFps && <small>158 FPS · 6.3ms</small>}
         </div>
-        <p className="preview-help">HUD 透明度、缩放、目标颜色和大小会在这里即时更新。</p>
-      </> : tab === "crosshair" ? <div className="compact-settings-preview"><TrainingCrosshair settings={settings} /><b>{crosshairTypes.find((type) => type.value === settings.crosshair)?.label}</b><span>训练中的实际准星</span></div> : tab === "input" ? <div className="input-live-preview"><div className="axis x"><i style={{ width: `${Math.min(100, settings.horizontalRatio * 50)}%` }} /></div><div className="axis y"><i style={{ height: `${Math.min(100, settings.verticalRatio * 50)}%` }} /></div><strong>{createNeonInputSensitivity(settings).cmPer360.toFixed(2)} cm</strong><span>完成 360° 转身所需距离</span></div> : tab === "audio" ? <div className="audio-live-preview">{[["总音量", settings.volume], ["命中", settings.hitVolume], ["Miss", settings.missVolume], ["Combo", settings.comboVolume]].map(([label, value]) => <span key={String(label)}><small>{label}</small><i><b style={{ width: `${Number(value) * 100}%` }} /></i></span>)}</div> : <div className="preview-coming-soon"><b>功能仍在准备中</b><span>开放后会在这里提供对应预览。</span></div>}
+      </>}
     </aside>
   );
 }
@@ -160,11 +288,13 @@ export function SettingsWorkspace({ settings, onApply }: { settings: TrainingSet
   const graphicsChanged = changedKeys.some((key) => GRAPHICS_KEYS.includes(key));
   const canonical = createNeonInputSensitivity(draft);
   const effectiveDpr = Math.min((draft.dprMode === "auto" ? devicePixelRatio : draft.dprMode) * draft.renderScale, 2.5);
+  const fullscreenWidth = typeof window === "undefined" ? 2560 : window.screen.width;
+  const fullscreenHeight = typeof window === "undefined" ? 1440 : window.screen.height;
   const sourceProfile = profiles.find((profile) => profile.id === source)!;
   const targetProfile = profiles.find((profile) => profile.id === target)!;
   const sourceSensitivityForCanonical = source === "neon" ? sourceValue * draft.horizontalRatio : sourceValue;
-  const sourceCanonical = sourceProfile.yawCoefficient ? canonicalFromGame(sourceSensitivityForCanonical, draft.mouseDpi, sourceProfile.yawCoefficient) : null;
-  const converted = sourceCanonical && targetProfile.yawCoefficient ? sensitivityFromCanonical(sourceCanonical, targetProfile.yawCoefficient) : null;
+  const sourceCanonical = canonicalFromProfile(sourceSensitivityForCanonical, draft.mouseDpi, sourceProfile);
+  const converted = sensitivityFromProfile(sourceCanonical, targetProfile);
   const convertedForTarget = converted === null ? null : target === "neon" ? converted / draft.horizontalRatio : converted;
   const isDotCrosshair = draft.crosshair === "dot";
   const isCircleCrosshair = draft.crosshair === "circle";
@@ -209,16 +339,16 @@ export function SettingsWorkspace({ settings, onApply }: { settings: TrainingSet
         <div className="converter-grid">
           <div className="converter-side">
             <small>来源</small>
-            <SelectControl label="来源游戏" value={source} onChange={(value) => { const profile = profiles.find((item) => item.id === value)!; setSource(value); setSourceValue((current) => Math.min(profile.sensitivityMax, Math.max(profile.sensitivityMin, current))); }}>{profiles.map((profile) => <option value={profile.id} key={profile.id}>{profile.name}</option>)}</SelectControl>
+            <GameSelectControl label="来源游戏" value={source} onChange={(value) => { const profile = profiles.find((item) => item.id === value)!; setSource(value); setSourceValue((current) => Math.min(profile.sensitivityMax, Math.max(profile.sensitivityMin, current))); }} />
             <NumberControl label="来源灵敏度" value={sourceValue} min={sourceProfile.sensitivityMin} max={sourceProfile.sensitivityMax} step={sourceProfile.sensitivityStep} onChange={(value) => setSourceValue(roundSensitivity(Math.min(sourceProfile.sensitivityMax, Math.max(sourceProfile.sensitivityMin, value))))} />
             <span>{sourceCanonical ? `${sourceCanonical.cmPer360.toFixed(2)} cm / 360` : "需要手动校准"}</span>
           </div>
           <button type="button" className="converter-swap" aria-label="交换来源与目标" onClick={() => { if (convertedForTarget !== null) setSourceValue(roundSensitivity(convertedForTarget)); setSource(target); setTarget(source); }}><Shuffle size={18} /></button>
           <div className="converter-side result">
             <small>目标</small>
-            <SelectControl label="目标游戏" value={target} onChange={setTarget}>{profiles.map((profile) => <option value={profile.id} key={profile.id}>{profile.name}</option>)}</SelectControl>
+            <GameSelectControl label="目标游戏" value={target} onChange={setTarget} />
             <strong>{convertedForTarget?.toFixed(3) ?? "—"}</strong>
-            <span>{target === "neon" && draft.horizontalRatio !== 1 ? `已计入 X 轴倍率 ${draft.horizontalRatio.toFixed(2)}×` : targetProfile.status === "verified" ? "已验证换算" : "需要手动校准"}</span>
+            <span>{target === "neon" && draft.horizontalRatio !== 1 ? `已计入 X 轴倍率 ${draft.horizontalRatio.toFixed(2)}×` : sourceProfile.status === "beta" || targetProfile.status === "beta" ? "参考换算 · 建议进游戏复核" : targetProfile.status === "verified" ? "已验证换算" : "需要手动校准"}</span>
           </div>
         </div>
         <div className="converter-actions">
@@ -226,7 +356,7 @@ export function SettingsWorkspace({ settings, onApply }: { settings: TrainingSet
           {target === "neon" && convertedForTarget !== null && <button type="button" className="primary" onClick={() => patch("sensitivity", roundSensitivity(convertedForTarget))}><Check size={16} />应用到 NEON AIM</button>}
         </div>
       </SettingsSection>
-      <div className="converter-disclaimer">换算以鼠标腰射灵敏度和相同 cm/360 为准，不包含 ADS、瞄具倍率、鼠标加速或游戏内独立轴向倍率。</div>
+        <div className="converter-disclaimer">换算以鼠标腰射灵敏度和相同 cm/360 为准，不包含 ADS、瞄具倍率、鼠标加速或游戏内独立轴向倍率。PUBG 使用独立的指数灵敏度曲线；PUBG、Delta Force 与 CrossFire 的结果均建议在游戏训练场完成一次 360° 距离复核。</div>
     </>
   );
 
@@ -257,7 +387,7 @@ export function SettingsWorkspace({ settings, onApply }: { settings: TrainingSet
         <SettingRow label="FPS 上限" help="通常建议选择“跟随显示器”，也可以限制帧率以降低显卡占用"><SelectControl label="FPS 上限" value={draft.fpsLimit} onChange={(value) => patchGraphics("fpsLimit", (value === "auto" ? "auto" : Number(value)) as FpsLimit)}>{FPS_OPTIONS.filter((option) => option !== "unlimited").map((option) => <option value={option} key={option}>{option === "auto" ? "跟随显示器" : `${option} FPS`}</option>)}</SelectControl></SettingRow>
         <SettingRow label="渲染比例" help="降低可提升流畅度，提高可让目标和场景边缘更清晰" value={`${Math.round(draft.renderScale * 100)}%`}><SelectControl label="渲染比例" value={draft.renderScale} onChange={(value) => patchGraphics("renderScale", Number(value))}>{[0.5, 0.67, 0.75, 0.85, 1, 1.1, 1.25].map((value) => <option value={value} key={value}>{Math.round(value * 100)}%</option>)}</SelectControl></SettingRow>
         <SettingRow label="高分屏清晰度" help="高分辨率屏幕可适当提高；选择自动即可适配大多数设备" value={`${effectiveDpr.toFixed(2)}×`}><SelectControl label="高分屏清晰度" value={draft.dprMode} onChange={(value) => patchGraphics("dprMode", value === "auto" ? "auto" : Number(value) as 1)}>{["auto", 1, 1.25, 1.5, 1.75, 2].map((value) => <option value={value} key={value}>{value === "auto" ? "自动" : `${value}×`}</option>)}</SelectControl></SettingRow>
-        <div className="render-readout"><span>预计渲染分辨率</span><strong>{Math.round(innerWidth * effectiveDpr)} × {Math.round(innerHeight * effectiveDpr)}</strong><small>进入全屏训练后会根据屏幕尺寸自动调整</small></div>
+        <div className="render-readout"><span>预计全屏渲染分辨率</span><strong>{Math.round(fullscreenWidth * effectiveDpr)} × {Math.round(fullscreenHeight * effectiveDpr)}</strong><small>按当前显示器全屏尺寸与清晰度估算</small></div>
       </SettingsSection>
       <SettingsSection eyebrow="VISUAL EFFECTS" title="视觉效果" description="集中控制影响性能的场景效果。关闭这些选项不会改变灵敏度、目标大小或计分。">
         <SettingRow label="抗锯齿" help="减少目标和场景边缘的锯齿；关闭后可略微降低显卡占用"><Toggle label="抗锯齿" checked={draft.antialiasEnabled} onChange={(value) => patchGraphics("antialiasEnabled", value)} /></SettingRow>
@@ -290,14 +420,15 @@ export function SettingsWorkspace({ settings, onApply }: { settings: TrainingSet
   );
 
   const content = tab === "input" ? inputContent : tab === "crosshair" ? crosshairContent : tab === "graphics" ? graphicsContent : tab === "hud" ? hudContent : tab === "audio" ? audioContent : <div className="settings-empty"><span>{tab === "accessibility" ? <Accessibility /> : <Database />}</span><small>COMING SOON</small><h3>{tab === "accessibility" ? "辅助功能" : "数据管理"}</h3><p>这部分功能仍在准备中，开放后会在这里提供设置。</p></div>;
+  const hasPreview = tab === "graphics" || tab === "hud";
 
   return (
     <main className="settings-workspace">
       <header className="settings-titlebar"><div><small>PLAYER SETTINGS</small><h1>设置</h1><p>调整控制、画面、准星和声音，让训练更符合你的习惯。</p></div></header>
-      <div className="settings-shell">
+      <div className={`settings-shell ${hasPreview ? "has-preview" : "no-preview"}`}>
         <nav className="settings-tabs" aria-label="设置分类">{tabs.map((item) => { const Icon = item.icon; return <button type="button" className={tab === item.id ? "active" : ""} onClick={() => setTab(item.id)} key={item.id}><Icon size={18} /><span><b>{item.label}</b><small>{item.note}</small></span></button>; })}</nav>
         <section className="settings-content">{content}</section>
-        <SettingsPreview tab={tab} settings={draft} effectiveDpr={effectiveDpr} />
+        {hasPreview && <SettingsPreview tab={tab} settings={draft} />}
       </div>
       <div className="settings-actions"><div><span className={changed ? "dirty" : ""} />{changed ? `已修改 ${changedKeys.length} 项` : "所有更改均已保存"}</div><button type="button" onClick={() => setDraft(settings)} disabled={!changed}><Undo2 size={16} />撤销修改</button><button type="button" onClick={resetCategory} disabled={tab === "accessibility" || tab === "data"}><RotateCcw size={16} />恢复本类默认</button><button type="button" className="primary" disabled={!changed} onClick={apply}><Check size={17} />保存设置</button></div>
       {confirm > 0 && <div className="graphics-confirm"><small>DISPLAY SAFETY</small><h3>保留新的画面设置？</h3><strong>{confirm}</strong><p>倒计时结束将恢复应用前的画面配置。</p><div><button type="button" className="primary" onClick={() => setConfirm(0)}>保留设置</button><button type="button" onClick={() => { onApply(rollbackRef.current); setDraft(rollbackRef.current); setConfirm(0); }}>恢复旧设置</button></div></div>}

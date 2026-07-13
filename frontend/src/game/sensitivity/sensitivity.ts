@@ -33,6 +33,7 @@ export interface GameSensitivityProfile {
   sensitivityMax: number;
   sensitivityStep: number;
   yawCoefficient?: number;
+  sensitivityCurve?: "linear" | "pubg";
   defaultFov?: number;
   fovType: FovType;
   supportsAds: boolean;
@@ -46,9 +47,20 @@ export const profiles: GameSensitivityProfile[] = [
   { id: "apex", name: "Apex Legends", aliases: ["apex"], sensitivityMin: 0.01, sensitivityMax: 20, sensitivityStep: 0.001, yawCoefficient: 0.022, defaultFov: 90, fovType: "horizontal-4-3", supportsAds: false, status: "verified" },
   { id: "overwatch-2", name: "Overwatch 2", aliases: ["ow2", "overwatch"], sensitivityMin: 0.01, sensitivityMax: 100, sensitivityStep: 0.001, yawCoefficient: 0.0066, defaultFov: 103, fovType: "horizontal", supportsAds: false, status: "verified" },
   { id: "call-of-duty", name: "Call of Duty / Warzone", aliases: ["cod", "warzone"], sensitivityMin: 0.01, sensitivityMax: 100, sensitivityStep: 0.001, yawCoefficient: 0.0066, defaultFov: 100, fovType: "horizontal", supportsAds: false, status: "verified" },
-  { id: "fortnite", name: "Fortnite (百分比)", aliases: ["fn", "fortnite"], sensitivityMin: 0.1, sensitivityMax: 100, sensitivityStep: 0.001, yawCoefficient: 0.005555, defaultFov: 80, fovType: "horizontal", supportsAds: false, status: "verified" },
+  { id: "fortnite", name: "Fortnite", aliases: ["fn", "fortnite"], sensitivityMin: 0.1, sensitivityMax: 100, sensitivityStep: 0.001, yawCoefficient: 0.005555, defaultFov: 80, fovType: "horizontal", supportsAds: false, status: "verified" },
   { id: "rainbow-six", name: "Rainbow Six Siege", aliases: ["r6", "siege"], sensitivityMin: 1, sensitivityMax: 100, sensitivityStep: 0.001, yawCoefficient: 0.00223, defaultFov: 84, fovType: "vertical", supportsAds: false, status: "verified" },
+  { id: "pubg", name: "PUBG: BATTLEGROUNDS", aliases: ["pubg", "battlegrounds"], sensitivityMin: 0, sensitivityMax: 100, sensitivityStep: 0.1, yawCoefficient: 0.002, sensitivityCurve: "pubg", defaultFov: 90, fovType: "horizontal", supportsAds: true, status: "beta" },
+  // These two profiles match raw-input hip-fire distance. Game updates and regional clients
+  // may expose different slider ranges, so the UI labels them as reference conversions.
+  { id: "delta-force", name: "Delta Force", aliases: ["delta", "delta force"], sensitivityMin: 0.01, sensitivityMax: 20, sensitivityStep: 0.001, yawCoefficient: 0.022, defaultFov: 90, fovType: "horizontal", supportsAds: false, status: "beta" },
+  { id: "crossfire", name: "CrossFire", aliases: ["cf", "crossfire"], sensitivityMin: 0.01, sensitivityMax: 20, sensitivityStep: 0.001, yawCoefficient: 0.022, defaultFov: 90, fovType: "horizontal", supportsAds: false, status: "beta" },
 ];
+
+export const gameProfilesForDisplay = [...profiles].sort((left, right) => {
+  if (left.id === "neon") return -1;
+  if (right.id === "neon") return 1;
+  return left.name.localeCompare(right.name, "en", { sensitivity: "base" });
+});
 
 const clampFinite = (value: number, fallback: number, minimum: number, maximum: number) =>
   Math.min(maximum, Math.max(minimum, Number.isFinite(value) ? value : fallback));
@@ -95,6 +107,22 @@ export function createNeonInputSensitivity(settings: NeonInputSettings): NeonInp
 export function sensitivityFromCanonical(canonical: CanonicalSensitivity, yawCoefficient: number) {
   const safeYawCoefficient = clampFinite(yawCoefficient, NEON_YAW_DEGREES_PER_COUNT, 0.000_001, 360);
   return canonical.radiansPerMouseCount / (safeYawCoefficient * Math.PI / 180);
+}
+
+export function degreesPerMouseCountFromProfile(sensitivity: number, profile: GameSensitivityProfile) {
+  const safeSensitivity = clampFinite(sensitivity, 1, profile.sensitivityMin, profile.sensitivityMax);
+  if (profile.sensitivityCurve === "pubg") return 0.002 * 10 ** (safeSensitivity / 50);
+  return safeSensitivity * (profile.yawCoefficient ?? NEON_YAW_DEGREES_PER_COUNT);
+}
+
+export function canonicalFromProfile(sensitivity: number, dpi: number, profile: GameSensitivityProfile) {
+  return canonicalFromGame(1, dpi, degreesPerMouseCountFromProfile(sensitivity, profile));
+}
+
+export function sensitivityFromProfile(canonical: CanonicalSensitivity, profile: GameSensitivityProfile) {
+  const degreesPerMouseCount = canonical.radiansPerMouseCount * 180 / Math.PI;
+  if (profile.sensitivityCurve === "pubg") return 50 * Math.log10(degreesPerMouseCount / 0.002);
+  return degreesPerMouseCount / (profile.yawCoefficient ?? NEON_YAW_DEGREES_PER_COUNT);
 }
 
 export function horizontalToVerticalFov(horizontal: number, aspect: number) {

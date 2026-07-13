@@ -538,9 +538,9 @@ export function GridShotTrainingPage({ settings, onHome, onSettings, onResult, q
 
       {trainingState === "ready" && (
         <div className="training-overlay ready-panel">
-          <span className="eyebrow">PRECISION PROTOCOL / 01</span>
+          <span className="eyebrow">CLICKING / FOUNDATION 01</span>
           <h1>GRID <b>SHOT</b></h1>
-          <p>快速击中随机生成的目标</p>
+          <p>看清目标，准星停稳，再打出下一枪。</p>
           <div className="ready-metrics">
             <span>训练时长<b>{duration} 秒</b></span>
             <span>历史最高分<b>{bests.score.toLocaleString()}</b></span>

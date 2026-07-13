@@ -4,18 +4,22 @@ import { AnimatePresence, motion } from "framer-motion";
 import {
   Activity,
   Award,
-  BarChart3,
   Bot,
   CalendarDays,
+  Check,
   ChevronRight,
   Cloud,
   Crosshair,
+  Gamepad2,
   Gauge,
   Home,
+  LockKeyhole,
+  Eye,
   Settings,
   Target,
   Timer,
   Volume2,
+  X,
   Zap,
 } from "lucide-react";
 import {
@@ -44,6 +48,22 @@ import { usePerformanceStore } from "./game/performance/performanceStore";
 import { DEFAULT_TRAINING_SETTINGS } from "./game/settings/trainingSettings";
 import { SettingsWorkspace } from "./pages/SettingsWorkspace";
 import { GridShotResultPage } from "./pages/GridShotResultPage";
+import { GridShotSettingsPreview } from "./components/training/GridShotSettingsPreview";
+import { GameIcon } from "./components/GameIcon";
+import {
+  filterTrainingCatalog,
+  getTrainingGameFitReason,
+  groupTrainingCatalogByDifficulty,
+  rankTrainingCatalogForGame,
+  trainingCatalogEntries,
+  trainingCategories,
+  trainingDifficulties,
+  trainingGameLabels,
+  trainingGameProfiles,
+  trainingGames,
+  type TrainingCatalogEntry,
+  type TrainingDifficultyId,
+} from "./game/trainingCatalog";
 import "./App.css";
 
 type ModeId = "grid" | "reflex" | "tracking";
@@ -93,6 +113,8 @@ const pathPage = (): Page =>
     ? "qa"
     : location.pathname.startsWith("/training/grid-shot")
     ? "game"
+    : location.pathname.startsWith("/training")
+      ? "modes"
     : location.pathname.startsWith("/results/grid-shot")
       ? "results"
       : location.pathname.startsWith("/settings")
@@ -133,44 +155,6 @@ const useApp = create<AppState>((set) => ({
   setGridResult: (gridResult, previousGridResult) =>
     set({ gridResult, previousGridResult }),
 }));
-
-const modes: {
-  id: ModeId;
-  name: string;
-  tag: string;
-  desc: string;
-  difficulty: string;
-  color: string;
-  available: boolean;
-}[] = [
-  {
-    id: "grid",
-    name: "GRID SHOT",
-    tag: "目标切换",
-    desc: "三目标循环刷新，训练大范围甩枪与连续点击。",
-    difficulty: "标准",
-    color: "#68f5ff",
-    available: true,
-  },
-  {
-    id: "reflex",
-    name: "REFLEX SHOT",
-    tag: "首发反应",
-    desc: "单目标快速出现训练，专注首发确认与定位反应。功能仍在准备中。",
-    difficulty: "待开发",
-    color: "#b783ff",
-    available: false,
-  },
-  {
-    id: "tracking",
-    name: "TRACKING",
-    tag: "连续控制",
-    desc: "持续追踪移动目标，训练平滑控制与方向修正。功能仍在准备中。",
-    difficulty: "待开发",
-    color: "#72f5b1",
-    available: false,
-  },
-];
 
 function AudioEngine() {
   const ctx = useRef<AudioContext | null>(null);
@@ -213,7 +197,7 @@ function Boot() {
     <div className="boot">
       <div className="scan" />
       <div className="brand-mark">
-        <i />
+        <BrandGlyph />
         <b>NEON</b> AIM
       </div>
       <p>PRECISION TRAINING SYSTEM</p>
@@ -235,13 +219,23 @@ function Boot() {
   );
 }
 
+function BrandGlyph() {
+  return (
+    <svg className="brand-glyph" viewBox="0 0 40 40" aria-hidden="true">
+      <path className="brand-glyph-frame" d="M12 5H5v7M28 5h7v7M12 35H5v-7M28 35h7v-7" />
+      <path className="brand-glyph-mark" d="M11.5 29V11l17 18V11" />
+      <circle cx="20" cy="20" r="2.6" />
+    </svg>
+  );
+}
+
 function Nav() {
   const page = useApp((s) => s.page),
     setPage = useApp((s) => s.setPage);
   return (
     <aside>
       <div className="logo">
-        <i />
+        <BrandGlyph />
         <span>
           NEON <b>AIM</b>
         </span>
@@ -275,25 +269,17 @@ function Nav() {
 
 function HomePage() {
   const setPage = useApp((s) => s.setPage);
-  const history = readHistory();
-  const latest = history[0];
-  const recentTrend = history.slice(0, 7).reverse().map((record, index) => ({
-    d: `${index + 1}`,
-    score: record.score,
-  }));
-  const bestScore = Math.max(0, ...history.map((record) => record.score));
-  const bestTpm = Math.max(0, ...history.map((record) => record.targetsPerMinute));
   return (
     <PageWrap title="首页" sub="TRAINING OVERVIEW">
       <section className="hero">
         <div>
           <span className="eyebrow">GRID SHOT · READY</span>
           <h1>
-            {latest ? "最近得分，" : "准备开始，"}
+            把每一枪，
             <br />
-            <b>{latest ? latest.score.toLocaleString() : "第一场训练。"}</b>
+            <b>练得更稳。</b>
           </h1>
-          <p>{latest ? `上一局准确率 ${latest.accuracy.toFixed(1)}%，最高 Combo ×${latest.maxCombo}。保持节奏，继续刷新最佳表现。` : "Grid Shot 已准备就绪。完成训练后，这里会展示你的真实成绩与进步趋势。"}</p>
+          <p>从看清目标、停稳准星开始，在 60 秒里找到准确与速度的平衡。</p>
           <button className="primary" onClick={() => setPage("game")}>
             <Crosshair size={19} />
             开始训练
@@ -307,32 +293,11 @@ function HomePage() {
           </span>
         </div>
       </section>
-      <div className="stat-row">
-        <Stat icon={Zap} label="最佳得分" value={bestScore ? bestScore.toLocaleString() : "—"} hint="Grid Shot" />
-        <Stat icon={Timer} label="完成局数" value={String(history.length)} hint="本地训练记录" />
-        <Stat icon={Crosshair} label="最近准确率" value={latest ? `${latest.accuracy.toFixed(1)}%` : "—"} hint={latest ? `${latest.hits} 次命中` : "等待首次训练"} />
-        <Stat icon={Activity} label="最佳 TPM" value={bestTpm ? Math.round(bestTpm).toString() : "—"} hint="每分钟命中目标" />
-      </div>
-      <div className="dashboard-grid">
-        <Panel title="近期得分" action={recentTrend.length ? `最近 ${recentTrend.length} 局` : "暂无记录"}>
-          {recentTrend.length ? <ResponsiveContainer width="100%" height={210}>
-            <LineChart data={recentTrend}>
-              <XAxis dataKey="d" stroke="#566375" tickLine={false} />
-              <YAxis hide />
-              <Tooltip contentStyle={{ background: "#0a121c", border: "1px solid #263849" }} />
-              <Line type="monotone" dataKey="score" stroke="#69efff" strokeWidth={2} dot={{ fill: "#07121a", stroke: "#69efff" }} />
-            </LineChart>
-          </ResponsiveContainer> : <div className="empty-chart"><BarChart3 size={30} /><b>完成训练后显示趋势</b><span>这里只会使用真实的 Grid Shot 成绩。</span></div>}
-        </Panel>
-        <Panel title="最近一局" action={latest ? new Date(latest.createdAt).toLocaleDateString("zh-CN") : "等待训练"}>
-          {latest ? <div className="recent-session">
-            <span>得分<b>{latest.score.toLocaleString()}</b></span>
-            <span>准确率<b>{latest.accuracy.toFixed(1)}%</b></span>
-            <span>最大 Combo<b>×{latest.maxCombo}</b></span>
-            <span>稳定性<b>{latest.consistencyScore.toFixed(0)}</b></span>
-          </div> : <div className="empty-chart compact"><Crosshair size={28} /><b>还没有训练记录</b><span>开始一局 Grid Shot，数据会自动出现在这里。</span></div>}
-        </Panel>
-      </div>
+      <section className="cloud-data-notice">
+        <div><Cloud size={22} /><span><small>TRAINING PROFILE</small><h3>训练档案即将开放</h3></span></div>
+        <p>账号系统上线后，这里将统一展示个人最佳、成绩趋势和训练建议。当前首页不建立临时统计档案。</p>
+        <b>功能仍在准备中</b>
+      </section>
       <section className="roadmap-section">
         <div className="roadmap-heading"><div><small>NEXT MODULES</small><h3>未来功能</h3></div><span>功能仍在准备中</span></div>
         <div className="roadmap-grid">
@@ -349,14 +314,16 @@ function PageWrap({
   title,
   sub,
   children,
+  className,
 }: {
   title: string;
   sub: string;
   children: React.ReactNode;
+  className?: string;
 }) {
   const metrics = usePerformanceStore((s) => s.metrics);
   return (
-    <main>
+    <main className={className}>
       <header>
         <div>
           <small>{sub}</small>
@@ -430,70 +397,184 @@ function FutureFeature({ icon: Icon, title, description }: { icon: typeof Zap; t
 function ModesPage() {
   const setPage = useApp((s) => s.setPage),
     setMode = useApp((s) => s.setMode),
-    results = useApp((s) => s.results);
+    results = useApp((s) => s.results),
+    settings = useApp((s) => s.settings);
+  const [selectedGame, setSelectedGame] = useState("all");
+  const [selectedDifficulty, setSelectedDifficulty] = useState<"all" | TrainingDifficultyId>("all");
+  const [selectedTrainingId, setSelectedTrainingId] = useState<string | null>(null);
+  const filteredEntries = useMemo(
+    () => rankTrainingCatalogForGame(
+      filterTrainingCatalog(trainingCatalogEntries, { game: selectedGame, difficulty: selectedDifficulty }),
+      selectedGame,
+    ),
+    [selectedGame, selectedDifficulty],
+  );
+  const difficultyGroups = useMemo(
+    () => groupTrainingCatalogByDifficulty(filteredEntries),
+    [filteredEntries],
+  );
+  const selectedGameLabel = selectedGame === "all" ? "全部游戏" : trainingGameLabels[selectedGame];
+  const selectedGameProfile = selectedGame === "all" ? null : trainingGameProfiles[selectedGame];
+  const selectedTraining = selectedTrainingId
+    ? trainingCatalogEntries.find((entry) => entry.id === selectedTrainingId) ?? null
+    : null;
+
+  useEffect(() => {
+    if (!selectedTraining) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setSelectedTrainingId(null);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [selectedTraining]);
+
   return (
-    <PageWrap title="训练" sub="SELECT MODE">
-      <div className="mode-intro">
-        <div>
-          <span className="eyebrow">PRECISION LAB</span>
-          <h1>
-            选择你的
-            <br />
-            <b>训练模式</b>
-          </h1>
+    <PageWrap title="训练" sub="TRAINING CATALOG" className="catalog-page">
+      <div className="catalog-status-strip">
+        <p>选择常玩的游戏，查看更贴近其击杀节奏、目标运动和交战距离的训练建议。</p>
+        <span><b>{trainingCatalogEntries.length}</b> 项训练</span>
+        <span><b>{trainingGames.length}</b> 套游戏推荐</span>
+      </div>
+
+      <section className="catalog-filter-panel" aria-label="训练筛选">
+        <div className="catalog-filter-heading">
+          <div><Gamepad2 size={18} /><span><small>GAME RECOMMENDATION</small><b>你主要玩哪款游戏？</b></span></div>
+          <p>{selectedGameProfile ? `${selectedGameProfile.ttkLabel}：建议优先训练${selectedGameProfile.focus}。同一难度内已按相关度排序。` : "选择一款游戏查看专项建议；推荐依据包括击杀时间、目标运动、交战距离和武器操作。"}</p>
         </div>
-        <p>
-          Grid Shot 已可完整训练。其他模式会在完成输入、计分和结果验证后陆续开放。
-        </p>
-      </div>
-      <div className="mode-grid">
-        {modes.map((m, i) => {
-          const best = Math.max(
-            0,
-            ...results.filter((r) => r.mode === m.id).map((r) => r.score),
-          );
-          return (
-            <motion.article
-              className={`mode-card ${m.available ? "available" : "coming-soon"}`}
-              key={m.id}
-              whileHover={m.available ? { y: -6 } : undefined}
-              style={{ "--accent": m.color } as React.CSSProperties}
-            >
-              <div className="mode-visual">
-                <span>0{i + 1}</span>
-                <div className={`preview ${m.id}`}>
-                  <i />
-                  <i />
-                  <i />
-                </div>
+        <div className="game-filter-layout">
+          <button className={`catalog-all-game ${selectedGame === "all" ? "active" : ""}`} aria-pressed={selectedGame === "all"} onClick={() => setSelectedGame("all")}>
+            <GameIcon gameId="all" /><span>全部训练<small>{trainingCatalogEntries.length} 项</small></span>{selectedGame === "all" && <Check size={14} />}
+          </button>
+          <div className="game-filter-grid">
+            {trainingGames.map((game) => {
+              const count = trainingCatalogEntries.filter((entry) => entry.games.includes(game.id)).length;
+              return (
+                <button key={game.id} className={selectedGame === game.id ? "active" : ""} aria-pressed={selectedGame === game.id} onClick={() => setSelectedGame(game.id)}>
+                  <GameIcon gameId={game.id} /><span>{game.label}<small>{count} 项推荐</small></span>{selectedGame === game.id && <Check size={14} />}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+        <div className="difficulty-filter">
+          <span>训练阶段</span>
+          <button className={selectedDifficulty === "all" ? "active" : ""} aria-pressed={selectedDifficulty === "all"} onClick={() => setSelectedDifficulty("all")}>全部</button>
+          {trainingDifficulties.map((difficulty) => (
+            <button key={difficulty.id} className={selectedDifficulty === difficulty.id ? "active" : ""} aria-pressed={selectedDifficulty === difficulty.id} onClick={() => setSelectedDifficulty(difficulty.id)}>
+              <i style={{ background: difficulty.color }} />{difficulty.label}
+            </button>
+          ))}
+          <b>{selectedGameLabel} · 找到 {filteredEntries.length} 项</b>
+        </div>
+      </section>
+
+      <AnimatePresence mode="wait">
+        <motion.div
+          className="catalog-results"
+          key={`${selectedGame}-${selectedDifficulty}`}
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -5 }}
+          transition={{ duration: .2 }}
+        >
+          {difficultyGroups.map((group) => (
+            <section className="training-difficulty-section" key={group.id}>
+              <header className="difficulty-section-header" style={{ "--difficulty-color": group.color } as React.CSSProperties}>
+                <span className="difficulty-index">{group.code}</span>
+                <div><small>{group.eyebrow}</small><h2>{group.label}训练</h2></div>
+                <p>{group.description}</p>
+                <b>{group.entries.length} 项</b>
+              </header>
+              <div className="catalog-grid">
+                {group.entries.map((m) => {
+                  const best = m.playableMode ? Math.max(0, ...results.filter((r) => r.mode === m.playableMode).map((r) => r.score)) : 0;
+                  return (
+                    <article className={`catalog-card ${m.available ? "available" : "coming-soon"}`} key={m.id} style={{ "--accent": m.color } as React.CSSProperties}>
+                      <CatalogScenePreview training={m} settings={settings} />
+                      <div className="catalog-card-labels">
+                        <span>{m.code} · {trainingCategories[m.category].label}</span>
+                        <b>{m.available ? <><i /> 已开放</> : <><LockKeyhole size={11} /> 待开发</>}</b>
+                      </div>
+                      <h3>{m.name}</h3>
+                      <p>{m.description}</p>
+                      <div className="catalog-specs">
+                        <span><small>时长</small><b>{m.durationSec} 秒</b></span>
+                        <span><small>操作</small><b>{m.inputStyle}</b></span>
+                        <span><small>主要指标</small><b>{m.primaryMetric}</b></span>
+                      </div>
+                      <div className="catalog-basis"><small>训练重点</small><b>{m.trainingBasis}</b></div>
+                      <div className="mode-games">
+                        {m.games.map((game) => <span className={game === selectedGame ? "matched" : ""} key={game}>{trainingGameLabels[game]}</span>)}
+                      </div>
+                      <div className="catalog-card-actions">
+                        <button onClick={() => setSelectedTrainingId(m.id)}><Eye size={14} />查看详情</button>
+                        {m.available && <button className="primary-card-action" onClick={() => {
+                          if (!m.playableMode) return;
+                          setMode(m.playableMode);
+                          setPage("game");
+                        }}>开始训练 <ChevronRight size={15} /></button>}
+                      </div>
+                      {m.available && <small className="catalog-best">历史最佳 {best || "—"}</small>}
+                    </article>
+                  );
+                })}
               </div>
-              <span className="tag">{m.tag}</span>
-              <span className="mode-state">{m.available ? "可以训练" : "待开发"}</span>
-              <h3>{m.name}</h3>
-              <p>{m.desc}</p>
-              <div className="mode-meta">
-                <span>
-                  难度 <b>{m.difficulty}</b>
-                </span>
-                <span>
-                  {m.available ? "最高分" : "状态"} <b>{m.available ? best || "—" : "准备中"}</b>
-                </span>
+            </section>
+          ))}
+        </motion.div>
+      </AnimatePresence>
+      <AnimatePresence>
+        {selectedTraining && (
+          <motion.div className="training-detail-backdrop" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setSelectedTrainingId(null);
+          }}>
+            <motion.aside className="training-detail-drawer" role="dialog" aria-modal="true" aria-label={`${selectedTraining.name} 训练详情`} initial={{ x: 60, opacity: 0 }} animate={{ x: 0, opacity: 1 }} exit={{ x: 60, opacity: 0 }} transition={{ duration: .22 }}>
+              <header>
+                <div><small>{selectedTraining.code} · {trainingCategories[selectedTraining.category].eyebrow}</small><h2>{selectedTraining.name}</h2></div>
+                <button aria-label="关闭训练详情" onClick={() => setSelectedTrainingId(null)}><X size={18} /></button>
+              </header>
+              <CatalogScenePreview training={selectedTraining} settings={settings} large />
+              <div className="training-detail-summary">
+                <span><small>难度</small><b>{trainingDifficulties.find((item) => item.id === selectedTraining.difficulty)?.label}</b></span>
+                <span><small>操作</small><b>{selectedTraining.inputStyle}</b></span>
+                <span><small>时长</small><b>{selectedTraining.durationSec} 秒</b></span>
+                <span><small>主要指标</small><b>{selectedTraining.primaryMetric}</b></span>
               </div>
-              <button
-                disabled={!m.available}
-                onClick={() => {
-                  if (!m.available) return;
-                  setMode(m.id);
+              <section><small>训练目标</small><p>{selectedTraining.description}</p></section>
+              <section><small>训练规则</small><p>{selectedTraining.method}</p></section>
+              <section><small>教练提示</small><p>{selectedTraining.coachCue}</p></section>
+              <section className="training-game-fit"><small>游戏推荐理由</small><div>{selectedTraining.games.map((game) => (
+                <span key={game}><b>{trainingGameLabels[game]}</b><em>{getTrainingGameFitReason(selectedTraining, game)}</em></span>
+              ))}</div></section>
+              {selectedTraining.available && <footer>
+                <button className="primary" onClick={() => {
+                  if (!selectedTraining.playableMode) return;
+                  setMode(selectedTraining.playableMode);
                   setPage("game");
-                }}
-              >
-                {m.available ? "开始训练" : "功能仍在准备中"} {m.available && <ChevronRight size={16} />}
-              </button>
-            </motion.article>
-          );
-        })}
-      </div>
+                }}>进入正式训练 <ChevronRight size={16} /></button>
+              </footer>}
+            </motion.aside>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </PageWrap>
+  );
+}
+
+function CatalogScenePreview({ training, settings, large = false }: { training: TrainingCatalogEntry; settings: TrainingSettings; large?: boolean }) {
+  if (training.available) {
+    return (
+      <div className={`catalog-scene-preview real grid-shot-settings-preview ${large ? "large" : ""}`}>
+        <GridShotSettingsPreview settings={settings} />
+        <span>GRID SHOT · 正式场景实时预览</span>
+      </div>
+    );
+  }
+  return (
+    <div className={`catalog-scene-preview pending ${large ? "large" : ""}`}>
+      <Target size={large ? 32 : 22} />
+      <span><small>SCENE PREVIEW</small><b>暂无场景预览</b><em>{training.targetForm} · 待开发</em></span>
+    </div>
   );
 }
 
@@ -790,7 +871,7 @@ function LegacyResults() {
         <div>
           <span>FINAL SCORE</span>
           <h1>{r.score.toLocaleString()}</h1>
-          <p>{modes.find((m) => m.id === r.mode)?.name} · 30 SEC</p>
+          <p>{trainingCatalogEntries.find((entry) => entry.playableMode === r.mode)?.name ?? "GRID SHOT"} · 30 SEC</p>
         </div>
       </div>
       <div className="result-grid">

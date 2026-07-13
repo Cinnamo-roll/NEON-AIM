@@ -18,6 +18,11 @@ describe("training settings behavior", () => {
     expect(patchCustomGraphics(DEFAULT_TRAINING_SETTINGS, "renderScale", 0.75)).toMatchObject({ renderScale: 0.75, graphicsPreset: "custom" });
   });
 
+  it("keeps FOV and FPS independent from the graphics quality preset", () => {
+    expect(patchCustomGraphics(DEFAULT_TRAINING_SETTINGS, "fov", 100)).toMatchObject({ fov: 100, graphicsPreset: "high" });
+    expect(patchCustomGraphics(DEFAULT_TRAINING_SETTINGS, "fpsLimit", 144)).toMatchObject({ fpsLimit: 144, graphicsPreset: "high" });
+  });
+
   it("provides actual defaults for every implemented category", () => {
     expect(Object.keys(CATEGORY_DEFAULTS)).toEqual(["input", "crosshair", "graphics", "hud", "audio"]);
     expect(CATEGORY_DEFAULTS.input).toMatchObject({ horizontalRatio: 1, verticalRatio: 1, invertX: false, invertY: false });

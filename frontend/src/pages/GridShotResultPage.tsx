@@ -145,7 +145,7 @@ export function GridShotResultPage({
 
       <div className="result-actions">
         <button className="primary" onClick={onAgain}><RotateCcw />再来一次</button>
-        <button onClick={onModes}><Target />返回训练协议</button>
+        <button onClick={onModes}><Target />返回训练列表</button>
         <button onClick={onHome}><Home />返回主页</button>
       </div>
     </main>
