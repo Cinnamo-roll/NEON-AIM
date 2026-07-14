@@ -2,15 +2,22 @@ import type {
   GridShotHistoryRecord,
   TrainingSettings,
 } from "../types/training";
-export const HISTORY_KEY = "neon-grid-shot-history-v1";
+const LEGACY_HISTORY_KEYS = ["neon-grid-shot-history-v1"];
+export const HISTORY_KEY = "neon-grid-shot-history-v2";
 export const SETTINGS_KEY = "neon-settings";
 export function readHistory(): GridShotHistoryRecord[] {
   try {
+    LEGACY_HISTORY_KEYS.forEach((key) => localStorage.removeItem(key));
     const v = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
     return Array.isArray(v) ? v.slice(0, 100) : [];
   } catch {
     return [];
   }
+}
+export function saveHistoryRecord(record: GridShotHistoryRecord): GridShotHistoryRecord[] {
+  const history = [record, ...readHistory().filter((item) => item.sessionId !== record.sessionId)].slice(0, 100);
+  localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
+  return history;
 }
 export function mergeSettings(defaults: TrainingSettings): TrainingSettings {
   try {

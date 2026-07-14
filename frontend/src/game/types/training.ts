@@ -39,6 +39,11 @@ export interface GridShotHistoryRecord extends Omit<
   createdAt: string;
   duration: number;
   grade: string;
+  sessionType?: import("../modes/gridShot/gridShotConfig").GridShotSessionType;
+  configuration?: {
+    targetSize: import("../modes/gridShot/gridShotConfig").GridShotTargetSize;
+    activeTargetCount: number;
+  };
   events?: GridShotEvent[];
   phases?: [GridShotPhaseAnalytics, GridShotPhaseAnalytics, GridShotPhaseAnalytics];
   integrity?: GridShotIntegrityResult;

@@ -2,6 +2,28 @@ export type GridShotDuration = 30 | 60 | 90;
 export type GridShotSceneId = "training-cabin";
 export type GridShotHitEffectStyle = "off" | "radial" | "shards" | "spiral";
 export type GridShotTargetSize = "small" | "medium" | "large";
+export type GridShotSessionType = "benchmark" | "practice";
+
+export const GRID_SHOT_MODE_VERSION = 1;
+export const GRID_SHOT_SCORING_VERSION = 1;
+export const GRID_SHOT_BENCHMARK = {
+  duration: 60,
+  targetSize: "medium",
+  activeTargetCount: 3,
+  modeVersion: GRID_SHOT_MODE_VERSION,
+  scoringVersion: GRID_SHOT_SCORING_VERSION,
+  configurationKey: "grid-shot:60s:medium",
+} as const;
+
+export function applyGridShotBenchmarkRules(
+  settings: GridShotModeSettings,
+): GridShotModeSettings {
+  return {
+    ...settings,
+    duration: GRID_SHOT_BENCHMARK.duration,
+    targetSize: GRID_SHOT_BENCHMARK.targetSize,
+  };
+}
 
 export interface GridShotModeSettings {
   duration: GridShotDuration;
@@ -91,6 +113,23 @@ export function gridShotParticleCount(style: GridShotHitEffectStyle) {
 
 export function getGridShotTargetSize(size: GridShotTargetSize) {
   return GRID_SHOT_TARGET_SIZES.find((option) => option.id === size) ?? GRID_SHOT_TARGET_SIZES[1];
+}
+
+export function isGridShotBenchmarkSettings(
+  settings: { duration: number; targetSize: GridShotTargetSize },
+) {
+  return settings.duration === GRID_SHOT_BENCHMARK.duration
+    && settings.targetSize === GRID_SHOT_BENCHMARK.targetSize;
+}
+
+export function isGridShotBenchmarkConfiguration(
+  configurationKey: string,
+  modeVersion = GRID_SHOT_MODE_VERSION,
+  scoringVersion = GRID_SHOT_SCORING_VERSION,
+) {
+  return configurationKey === GRID_SHOT_BENCHMARK.configurationKey
+    && modeVersion === GRID_SHOT_BENCHMARK.modeVersion
+    && scoringVersion === GRID_SHOT_BENCHMARK.scoringVersion;
 }
 
 function sanitizeTargetSize(value: unknown): GridShotTargetSize {

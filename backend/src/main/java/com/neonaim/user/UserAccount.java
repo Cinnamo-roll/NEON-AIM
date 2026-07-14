@@ -93,6 +93,11 @@ class UserAccount {
 
 	UserAccount(String username, String usernameNormalized, String email, String emailNormalized,
 			String passwordHash, String displayName, Instant now) {
+		this(username, usernameNormalized, email, emailNormalized, passwordHash, displayName, Role.USER, now);
+	}
+
+	UserAccount(String username, String usernameNormalized, String email, String emailNormalized,
+			String passwordHash, String displayName, Role role, Instant now) {
 		this.id = UUID.randomUUID();
 		this.username = username;
 		this.usernameNormalized = usernameNormalized;
@@ -104,7 +109,7 @@ class UserAccount {
 		this.avatarPreset = "pulse";
 		this.accentColor = "cyan";
 		this.profileVisibility = Visibility.PUBLIC;
-		this.role = Role.USER;
+		this.role = role;
 		this.status = Status.ACTIVE;
 		this.createdAt = now;
 		this.updatedAt = now;
@@ -165,6 +170,11 @@ class UserAccount {
 
 	void changePassword(String passwordHash, Instant now) {
 		this.passwordHash = passwordHash;
+		this.updatedAt = now;
+	}
+
+	void promoteToAdmin(Instant now) {
+		this.role = Role.ADMIN;
 		this.updatedAt = now;
 	}
 

@@ -1,6 +1,6 @@
 spring:
   datasource:
-    url: jdbc:h2:mem:neonaim;MODE=PostgreSQL;DB_CLOSE_DELAY=-1;DATABASE_TO_LOWER=TRUE
+    url: jdbc:h2:file:./data/neonaim;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE
     username: sa
     password:
     driver-class-name: org.h2.Driver
@@ -9,3 +9,11 @@ management:
   health:
     redis:
       enabled: false
+
+app:
+  local-admin:
+    enabled: ${LOCAL_ADMIN_ENABLED:false}
+    username: ${LOCAL_ADMIN_USERNAME:admin}
+    email: ${LOCAL_ADMIN_EMAIL:admin@neonaim.local}
+    password: ${LOCAL_ADMIN_PASSWORD:}
+    display-name: ${LOCAL_ADMIN_DISPLAY_NAME:NEON Admin}

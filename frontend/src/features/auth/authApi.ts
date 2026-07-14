@@ -36,7 +36,7 @@ export type UpdateProfileInput = Partial<Pick<UserProfile,
   "displayName" | "bio" | "avatarPreset" | "accentColor" | "preferredGame" | "regionCode" | "profileVisibility"
 >>;
 
-type ApiResponse<T> = { data: T; message: string | null };
+export type ApiResponse<T> = { data: T; message: string | null };
 type ProblemResponse = {
   status?: number;
   detail?: string;
@@ -136,7 +136,7 @@ async function refreshSession(): Promise<AuthSession | null> {
   return refreshInFlight;
 }
 
-async function authenticatedRequest<T>(path: string, init: RequestInit = {}, retry = true): Promise<ApiResponse<T>> {
+export async function authenticatedRequest<T>(path: string, init: RequestInit = {}, retry = true): Promise<ApiResponse<T>> {
   if (!accessToken) {
     const session = await refreshSession();
     if (!session) throw new AuthApiError(401, "UNAUTHENTICATED", "请先登录后继续");

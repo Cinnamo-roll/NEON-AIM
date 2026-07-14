@@ -34,6 +34,7 @@ import {
   YAxis,
 } from "recharts";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import * as THREE from "three";
 import { create } from "zustand";
 import { GridShotTrainingPage } from "./pages/GridShotTrainingPage";
@@ -44,6 +45,11 @@ import type {
 } from "./game/types/training";
 import { readHistory } from "./game/storage/trainingStorage";
 import {
+  saveGridShotTrainingSession,
+  syncPendingTrainingSessions,
+  type TrainingSessionSaveStatus,
+} from "./game/storage/trainingSessionService";
+import {
   createNeonInputSensitivity,
   normalizeNeonInputSettings,
 } from "./game/sensitivity/sensitivity";
@@ -52,11 +58,14 @@ import { interfaceAudio } from "./game/audio/interfaceAudio";
 import { sanitizeTrainingSettings } from "./game/settings/trainingSettings";
 import { CROSSHAIR_PRESETS, matchCrosshairPreset } from "./game/settings/crosshairPresets";
 import {
+  applyGridShotBenchmarkRules,
   sanitizeGridShotModeSettings,
   type GridShotModeSettings,
+  type GridShotSessionType,
 } from "./game/modes/gridShot/gridShotConfig";
 import { SettingsWorkspace } from "./pages/SettingsWorkspace";
 import { GridShotResultPage } from "./pages/GridShotResultPage";
+import { CareerPage } from "./pages/CareerPage";
 import { GridShotSettingsPreview } from "./components/training/GridShotSettingsPreview";
 import { GameIcon } from "./components/GameIcon";
 import { PlayerAvatar, ProfileWorkspace } from "./features/auth/ProfileWorkspace";
@@ -83,6 +92,7 @@ import "./gameShell.css";
 type ModeId = "grid" | "reflex" | "tracking";
 type Page = "boot" | "home" | "modes" | "game" | "results" | "progress" | "workshop" | "ranking" | "profile" | "settings" | "qa";
 type SettingsData = TrainingSettings;
+type GridSaveState = { sessionId?: string; serverSessionId?: string; status: TrainingSessionSaveStatus };
 type Result = {
   mode: ModeId;
   score: number;
@@ -98,15 +108,19 @@ type AppState = {
   mode: ModeId;
   settings: SettingsData;
   gridShotSettings: GridShotModeSettings;
+  gridShotSessionType: GridShotSessionType;
   results: Result[];
   gridResult?: GridShotHistoryRecord;
   previousGridResult?: GridShotHistoryRecord;
+  gridSaveState: GridSaveState;
   setPage: (p: Page) => void;
   setMode: (m: ModeId) => void;
   updateSettings: (v: Partial<SettingsData>) => void;
   updateGridShotSettings: (v: Partial<GridShotModeSettings>) => void;
+  setGridShotSessionType: (value: GridShotSessionType) => void;
   saveResult: (r: Result) => void;
   setGridResult: (r: GridShotHistoryRecord, p?: GridShotHistoryRecord) => void;
+  setGridSaveState: (state: GridSaveState) => void;
 };
 const load = <T,>(key: string, fallback: T): T => {
   try {
@@ -127,6 +141,9 @@ const loadedGridShotSettings = sanitizeGridShotModeSettings({
   comboVolume: rawLoadedSettings.comboVolume,
   ...load<Record<string, unknown>>("neon-grid-shot-settings", {}),
 });
+const loadedGridShotSessionType = load<GridShotSessionType>("neon-grid-shot-session-type", "practice") === "benchmark"
+  ? "benchmark"
+  : "practice";
 const pathPage = (): Page =>
   import.meta.env.DEV && location.pathname.startsWith("/dev/grid-shot-qa")
     ? "qa"
@@ -164,8 +181,12 @@ const useApp = create<AppState>((set, get) => ({
   page: pathPage(),
   mode: "grid",
   settings: normalizedLoadedSettings,
-  gridShotSettings: loadedGridShotSettings,
+  gridShotSettings: loadedGridShotSessionType === "benchmark"
+    ? applyGridShotBenchmarkRules(loadedGridShotSettings)
+    : loadedGridShotSettings,
+  gridShotSessionType: loadedGridShotSessionType,
   results: load("neon-results", []),
+  gridSaveState: { status: "idle" },
   setPage: (page) => {
     const current = get();
     if (current.page === page) return;
@@ -194,6 +215,10 @@ const useApp = create<AppState>((set, get) => ({
       localStorage.setItem("neon-grid-shot-settings", JSON.stringify(gridShotSettings));
       return { gridShotSettings };
     }),
+  setGridShotSessionType: (gridShotSessionType) => {
+    localStorage.setItem("neon-grid-shot-session-type", JSON.stringify(gridShotSessionType));
+    set({ gridShotSessionType });
+  },
   saveResult: (r) =>
     set((s) => {
       const results = [r, ...s.results].slice(0, 30);
@@ -202,7 +227,18 @@ const useApp = create<AppState>((set, get) => ({
     }),
   setGridResult: (gridResult, previousGridResult) =>
     set({ gridResult, previousGridResult }),
+  setGridSaveState: (gridSaveState) => set({ gridSaveState }),
 }));
+
+function openGridShotSession(sessionType: GridShotSessionType) {
+  const app = useApp.getState();
+  app.setMode("grid");
+  app.setGridShotSessionType(sessionType);
+  if (sessionType === "benchmark") {
+    app.updateGridShotSettings(applyGridShotBenchmarkRules(app.gridShotSettings));
+  }
+  app.setPage("game");
+}
 
 function useInterfaceAudioFeedback(enabled: boolean) {
   useEffect(() => {
@@ -497,8 +533,8 @@ function HomePage() {
             <span><small>{tx("训练重点", "Focus")}</small><b>{tx("落点 · 节奏", "Placement · Rhythm")}</b></span>
           </div>
           <div className="mission-actions">
-            <button className="primary" onClick={() => setPage("game")}>
-              <Crosshair size={18} />{tx("开始训练", "Start training")}<ChevronRight size={17} />
+            <button className="primary" onClick={() => openGridShotSession("benchmark")}>
+              <Crosshair size={18} />{tx("开始基准训练", "Start benchmark")}<ChevronRight size={17} />
             </button>
             <button onClick={() => setPage("modes")}>{tx("更换训练", "Change drill")}</button>
           </div>
@@ -745,9 +781,13 @@ function ModesPage() {
                           <button onClick={() => setSelectedTrainingId(m.id)}><Eye size={14} />{tx("查看详情", "View details")}</button>
                           {m.available && <button className="primary-card-action" onClick={() => {
                             if (!m.playableMode) return;
+                            if (m.id === "grid-shot") {
+                              openGridShotSession("benchmark");
+                              return;
+                            }
                             setMode(m.playableMode);
                             setPage("game");
-                          }}>{tx("开始训练", "Start training")} <ChevronRight size={15} /></button>}
+                          }}>{tx("进入训练", "Enter training")} <ChevronRight size={15} /></button>}
                         </div>
                       </div>
                     </article>
@@ -773,40 +813,50 @@ function ModesPage() {
           })}
         </motion.div>
       </AnimatePresence>
-      <AnimatePresence>
+      {createPortal(<AnimatePresence>
         {selectedTraining && selectedTrainingCopy && (
           <motion.div className="training-detail-backdrop" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onMouseDown={(event) => {
             if (event.target === event.currentTarget) setSelectedTrainingId(null);
           }}>
-            <motion.aside className="training-detail-drawer" role="dialog" aria-modal="true" aria-label={`${selectedTraining.name} ${tx("训练详情", "training details")}`} initial={{ x: 60, opacity: 0 }} animate={{ x: 0, opacity: 1 }} exit={{ x: 60, opacity: 0 }} transition={{ duration: .22 }}>
+            <motion.aside className="training-detail-dialog" role="dialog" aria-modal="true" aria-label={`${selectedTraining.name} ${tx("训练详情", "training details")}`} initial={{ y: 18, scale: .975, opacity: 0 }} animate={{ y: 0, scale: 1, opacity: 1 }} exit={{ y: 12, scale: .985, opacity: 0 }} transition={{ duration: .2, ease: "easeOut" }}>
               <header>
-                <div><h2>{selectedTraining.name}</h2></div>
+                <div><small>{tx("训练简报", "Training brief")}</small><h2>{selectedTraining.name}</h2></div>
                 <button aria-label={tx("关闭训练详情", "Close training details")} onClick={() => setSelectedTrainingId(null)}><X size={18} /></button>
               </header>
-              <CatalogScenePreview training={selectedTraining} settings={settings} large />
-              <div className="training-detail-summary">
-                <span><small>{tx("难度", "Tier")}</small><b>{getTrainingDifficultyLabel(selectedTraining.difficulty)}</b></span>
-                <span><small>{tx("操作", "Input")}</small><b>{selectedTrainingCopy.inputStyle}</b></span>
-                <span><small>{tx("时长", "Duration")}</small><b>{selectedTraining.durationSec} {tx("秒", "sec")}</b></span>
-                <span><small>{tx("主要指标", "Primary metric")}</small><b>{selectedTrainingCopy.primaryMetric}</b></span>
+              <div className="training-detail-layout">
+                <div className="training-detail-visual">
+                  <CatalogScenePreview training={selectedTraining} settings={settings} large />
+                  <div className="training-detail-summary">
+                    <span><small>{tx("难度", "Tier")}</small><b>{getTrainingDifficultyLabel(selectedTraining.difficulty)}</b></span>
+                    <span><small>{tx("操作", "Input")}</small><b>{selectedTrainingCopy.inputStyle}</b></span>
+                    <span><small>{tx("时长", "Duration")}</small><b>{selectedTraining.durationSec} {tx("秒", "sec")}</b></span>
+                    <span><small>{tx("主要指标", "Primary metric")}</small><b>{selectedTrainingCopy.primaryMetric}</b></span>
+                  </div>
+                </div>
+                <div className="training-detail-content">
+                  <section><small>{tx("训练目标", "Training goal")}</small><p>{selectedTrainingCopy.description}</p></section>
+                  <section><small>{tx("训练规则", "Rules")}</small><p>{selectedTrainingCopy.method}</p></section>
+                  <section><small>{tx("教练提示", "Coach cue")}</small><p>{selectedTrainingCopy.coachCue}</p></section>
+                  <section className="training-game-fit"><small>{tx("游戏推荐理由", "Why it fits")}</small><div>{selectedTraining.games.map((game) => (
+                    <span key={game}><b>{trainingGameLabels[game]}</b><em>{getTrainingGameFitReason(selectedTraining, game)}</em></span>
+                  ))}</div></section>
+                </div>
               </div>
-              <section><small>{tx("训练目标", "Training goal")}</small><p>{selectedTrainingCopy.description}</p></section>
-              <section><small>{tx("训练规则", "Rules")}</small><p>{selectedTrainingCopy.method}</p></section>
-              <section><small>{tx("教练提示", "Coach cue")}</small><p>{selectedTrainingCopy.coachCue}</p></section>
-              <section className="training-game-fit"><small>{tx("游戏推荐理由", "Why it fits")}</small><div>{selectedTraining.games.map((game) => (
-                <span key={game}><b>{trainingGameLabels[game]}</b><em>{getTrainingGameFitReason(selectedTraining, game)}</em></span>
-              ))}</div></section>
               {selectedTraining.available && <footer>
                 <button className="primary" onClick={() => {
                   if (!selectedTraining.playableMode) return;
+                  if (selectedTraining.id === "grid-shot") {
+                    openGridShotSession("benchmark");
+                    return;
+                  }
                   setMode(selectedTraining.playableMode);
                   setPage("game");
-                }}>{tx("进入正式训练", "Enter training")} <ChevronRight size={16} /></button>
+                }}>{tx("进入训练", "Enter training")} <ChevronRight size={16} /></button>
               </footer>}
             </motion.aside>
           </motion.div>
         )}
-      </AnimatePresence>
+      </AnimatePresence>, document.body)}
     </PageWrap>
   );
 }
@@ -817,7 +867,6 @@ function CatalogScenePreview({ training, settings, large = false }: { training: 
     return (
       <div className={`catalog-scene-preview real grid-shot-settings-preview ${large ? "large" : ""}`}>
         <GridShotSettingsPreview settings={settings} />
-        <span>{tx("正式场景预览", "Live scene preview")}</span>
       </div>
     );
   }
@@ -1067,20 +1116,36 @@ function LegacyGamePage() {
 function GamePage() {
   const settings = useApp((s) => s.settings);
   const gridShotSettings = useApp((s) => s.gridShotSettings);
+  const gridShotSessionType = useApp((s) => s.gridShotSessionType);
   const updateSettings = useApp((s) => s.updateSettings);
   const updateGridShotSettings = useApp((s) => s.updateGridShotSettings);
+  const setGridShotSessionType = useApp((s) => s.setGridShotSessionType);
   const setPage = useApp((s) => s.setPage);
   const setGridResult = useApp((s) => s.setGridResult);
+  const setGridSaveState = useApp((s) => s.setGridSaveState);
+  const authStatus = useAuthStore((state) => state.status);
   return (
     <GridShotTrainingPage
+      key={`${gridShotSessionType}:${gridShotSettings.duration}:${gridShotSettings.targetSize}`}
       settings={settings}
       gridShotSettings={gridShotSettings}
+      sessionType={gridShotSessionType}
       onHome={() => setPage("home")}
       onApplySettings={updateSettings}
       onApplyGridShotSettings={updateGridShotSettings}
+      onSessionTypeChange={(value) => {
+        setGridShotSessionType(value);
+        if (value === "benchmark") updateGridShotSettings(applyGridShotBenchmarkRules(useApp.getState().gridShotSettings));
+      }}
       onResult={(record) => {
         setGridResult(record);
+        setGridSaveState({ sessionId: record.sessionId, status: "saving" });
         setPage("results");
+        void saveGridShotTrainingSession(record, gridShotSettings, gridShotSessionType, authStatus === "authenticated").then((result) => {
+          if (useApp.getState().gridSaveState.sessionId === result.sessionId) {
+            useApp.getState().setGridSaveState({ sessionId: result.sessionId, serverSessionId: result.serverSessionId, status: result.status });
+          }
+        });
       }}
     />
   );
@@ -1094,8 +1159,15 @@ function GridShotQaPage() {
   const setPage = useApp((state) => state.setPage);
   const [record, setRecord] = useState<GridShotHistoryRecord>();
   const [run, setRun] = useState(0);
-  if (record) return <GridShotResultPage record={record} onAgain={() => { setRecord(undefined); setRun((value) => value + 1); }} onTrainingHome={() => setPage("modes")} />;
-  return <GridShotTrainingPage key={run} qaMode settings={settings} gridShotSettings={gridShotSettings} onHome={() => setPage("home")} onApplySettings={updateSettings} onApplyGridShotSettings={updateGridShotSettings} onResult={(result) => setRecord(result)} />;
+  if (record) return (
+    <div className="shell focused-shell result-shell">
+      <div className="ambient-stars" aria-hidden="true"><i /><i /><i /></div>
+      <div className="page">
+        <GridShotResultPage record={record} targetSize={gridShotSettings.targetSize} onAgain={() => { setRecord(undefined); setRun((value) => value + 1); }} onTrainingHome={() => setPage("modes")} />
+      </div>
+    </div>
+  );
+  return <GridShotTrainingPage key={run} qaMode settings={settings} gridShotSettings={gridShotSettings} sessionType="practice" onHome={() => setPage("home")} onApplySettings={updateSettings} onApplyGridShotSettings={updateGridShotSettings} onSessionTypeChange={() => undefined} onResult={(result) => setRecord(result)} />;
 }
 
 function CrosshairUI() {
@@ -1246,7 +1318,7 @@ function LegacyEnhancedResults() {
   );
 }
 
-function Results(){const record=useApp(s=>s.gridResult),setPage=useApp(s=>s.setPage);return <GridShotResultPage record={record} onAgain={()=>setPage('game')} onTrainingHome={()=>setPage('modes')}/>}
+function Results(){const record=useApp(s=>s.gridResult),targetSize=useApp(s=>s.gridShotSettings.targetSize),saveState=useApp(s=>s.gridSaveState),setPage=useApp(s=>s.setPage);return <GridShotResultPage record={record} targetSize={targetSize} saveStatus={saveState.sessionId===record?.sessionId?saveState.status:"idle"} serverSessionId={saveState.sessionId===record?.sessionId?saveState.serverSessionId:undefined} onAgain={()=>setPage('game')} onTrainingHome={()=>setPage('modes')} onOpenSettings={()=>setPage('settings')}/>}
 void LegacyEnhancedResults;
 function LegacySettingsPage() {
   const s = useApp((x) => x.settings),
@@ -1515,6 +1587,8 @@ function AccountAccessPage() {
 function App() {
   const page = useApp((s) => s.page);
   const language = useApp((s) => s.settings.language);
+  const careerTargetSize = useApp((s) => s.gridShotSettings.targetSize);
+  const setPage = useApp((s) => s.setPage);
   const initializeAuth = useAuthStore((s) => s.initialize);
   const authStatus = useAuthStore((s) => s.status);
   const reduceMotion = useReducedMotion();
@@ -1539,6 +1613,27 @@ function App() {
     };
   }, [authStatus, initializeAuth]);
   useEffect(() => {
+    if (authStatus !== "authenticated") return;
+    let active = true;
+    const sync = () => {
+      void syncPendingTrainingSessions().then((result) => {
+        if (!active) return;
+        const current = useApp.getState().gridSaveState;
+        if (current.sessionId && result.syncedSessionIds.includes(current.sessionId)) {
+          useApp.getState().setGridSaveState({ sessionId: current.sessionId, serverSessionId: result.serverSessionIds[current.sessionId], status: "saved-cloud" });
+        }
+      });
+    };
+    sync();
+    window.addEventListener("online", sync);
+    window.addEventListener("focus", sync);
+    return () => {
+      active = false;
+      window.removeEventListener("online", sync);
+      window.removeEventListener("focus", sync);
+    };
+  }, [authStatus]);
+  useEffect(() => {
     if (page === "profile") window.scrollTo({ top: 0, left: 0, behavior: "instant" });
   }, [authStatus, page]);
   useEffect(() => {
@@ -1553,7 +1648,7 @@ function App() {
   const focusedPage = page === "settings" || page === "results";
   const showTopbar = page !== "results";
   return (
-    <div className={["shell", focusedPage ? "focused-shell" : "", showTopbar ? "has-topbar" : ""].filter(Boolean).join(" ")}>
+    <div className={["shell", focusedPage ? "focused-shell" : "", page === "results" ? "result-shell" : "", showTopbar ? "has-topbar" : ""].filter(Boolean).join(" ")}>
       <div className="ambient-stars" aria-hidden="true"><i /><i /><i /></div>
       <BrowserFrameMonitor />
       {showTopbar && <TopNavigation />}
@@ -1566,20 +1661,17 @@ function App() {
           exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: -8, scale: 1.002, filter: "blur(3px)" }}
           transition={{ duration: reduceMotion ? .12 : .32, ease: [0.22, 0.72, 0.24, 1] }}
         >
-          {!reduceMotion && (
-            <motion.i
-              className="page-transition-scan"
-              aria-hidden="true"
-              initial={{ x: "-115%", opacity: 0 }}
-              animate={{ x: "115%", opacity: [0, .72, 0] }}
-              transition={{ duration: .48, ease: "easeOut" }}
-            />
-          )}
           {page === "home" ? (
             <HomePage />
           ) : page === "modes" ? (
             <ModesPage />
-          ) : page === "progress" || page === "workshop" || page === "ranking" ? (
+          ) : page === "progress" ? (
+            <CareerPage
+              targetSize={careerTargetSize}
+              onStartBenchmark={() => openGridShotSession("benchmark")}
+              onBrowseTraining={() => setPage("modes")}
+            />
+          ) : page === "workshop" || page === "ranking" ? (
             <FutureHubPage kind={page} />
           ) : page === "profile" ? (
             <ProfilePage />
