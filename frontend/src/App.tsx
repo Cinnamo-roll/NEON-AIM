@@ -5,6 +5,7 @@ import {
   Activity,
   ArrowLeft,
   Award,
+  Blocks,
   Bot,
   CalendarDays,
   Check,
@@ -13,8 +14,8 @@ import {
   Crosshair,
   Gamepad2,
   Gauge,
+  Hammer,
   Eye,
-  LogIn,
   LogOut,
   Settings,
   Target,
@@ -58,7 +59,7 @@ import { SettingsWorkspace } from "./pages/SettingsWorkspace";
 import { GridShotResultPage } from "./pages/GridShotResultPage";
 import { GridShotSettingsPreview } from "./components/training/GridShotSettingsPreview";
 import { GameIcon } from "./components/GameIcon";
-import { ConfirmationDialog, PlayerAvatar, ProfileWorkspace } from "./features/auth/ProfileWorkspace";
+import { PlayerAvatar, ProfileWorkspace } from "./features/auth/ProfileWorkspace";
 import { useAuthStore } from "./features/auth/authStore";
 import { setAppLanguage, tx } from "./i18n";
 import {
@@ -80,7 +81,7 @@ import "./App.css";
 import "./gameShell.css";
 
 type ModeId = "grid" | "reflex" | "tracking";
-type Page = "boot" | "home" | "modes" | "game" | "results" | "progress" | "tools" | "ranking" | "profile" | "settings" | "qa";
+type Page = "boot" | "home" | "modes" | "game" | "results" | "progress" | "workshop" | "ranking" | "profile" | "settings" | "qa";
 type SettingsData = TrainingSettings;
 type Result = {
   mode: ModeId;
@@ -137,8 +138,8 @@ const pathPage = (): Page =>
       ? "results"
       : location.pathname.startsWith("/progress")
         ? "progress"
-        : location.pathname.startsWith("/tools")
-          ? "tools"
+        : location.pathname.startsWith("/workshop") || location.pathname.startsWith("/tools")
+          ? "workshop"
           : location.pathname.startsWith("/ranking") || location.pathname.startsWith("/compete")
             ? "ranking"
           : location.pathname.startsWith("/profile")
@@ -153,7 +154,7 @@ const pagePath: Record<Page, string> = {
   game: "/training/grid-shot",
   results: "/results/grid-shot",
   progress: "/progress",
-  tools: "/tools",
+  workshop: "/workshop",
   ranking: "/ranking",
   profile: "/profile",
   settings: "/settings",
@@ -309,10 +310,10 @@ function readPlayerProgress(): PlayerProgress {
 }
 
 const primaryNavigation: Array<{ zh: string; en: string; page: Page; anchor?: boolean }> = [
+  { zh: "工坊", en: "Workshop", page: "workshop" },
   { zh: "训练", en: "Training", page: "modes" },
-  { zh: "生涯", en: "Career", page: "progress" },
   { zh: "大厅", en: "Lobby", page: "home", anchor: true },
-  { zh: "工具", en: "Tools", page: "tools" },
+  { zh: "生涯", en: "Career", page: "progress" },
   { zh: "排行", en: "Ranks", page: "ranking" },
 ];
 
@@ -322,10 +323,9 @@ function TopNavigation() {
   const setPage = useApp((state) => state.setPage);
   const authStatus = useAuthStore((state) => state.status);
   const authUser = useAuthStore((state) => state.user);
-  const authBusy = useAuthStore((state) => state.busyAction);
   const logout = useAuthStore((state) => state.logout);
   const [profileOpen, setProfileOpen] = useState(false);
-  const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
+  const [logoutArmed, setLogoutArmed] = useState(false);
   const profileRef = useRef<HTMLDivElement>(null);
   const progress = readPlayerProgress();
   const progressPercent = Math.round((progress.currentXp / progress.requiredXp) * 100);
@@ -335,10 +335,16 @@ function TopNavigation() {
   useEffect(() => {
     if (!profileOpen) return;
     const close = (event: MouseEvent) => {
-      if (!profileRef.current?.contains(event.target as Node)) setProfileOpen(false);
+      if (!profileRef.current?.contains(event.target as Node)) {
+        setProfileOpen(false);
+        setLogoutArmed(false);
+      }
     };
     const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setProfileOpen(false);
+      if (event.key === "Escape") {
+        setProfileOpen(false);
+        setLogoutArmed(false);
+      }
     };
     window.addEventListener("mousedown", close);
     window.addEventListener("keydown", closeOnEscape);
@@ -350,6 +356,7 @@ function TopNavigation() {
 
   const navigate = (destination: Page) => {
     setProfileOpen(false);
+    setLogoutArmed(false);
     setPage(destination);
   };
   const toggleProfile = () => {
@@ -358,11 +365,15 @@ function TopNavigation() {
       settings.volume * settings.interfaceVolume,
       settings.muted || settings.interfaceMuted,
     );
+    if (profileOpen) setLogoutArmed(false);
     setProfileOpen((current) => !current);
   };
-  const confirmLogout = async () => {
-    await logout();
-    setLogoutConfirmOpen(false);
+  const handlePlayerTrigger = () => {
+    if (authStatus !== "authenticated") {
+      navigate("profile");
+      return;
+    }
+    toggleProfile();
   };
 
   return (
@@ -393,17 +404,17 @@ function TopNavigation() {
         </nav>
 
         <div className="topbar-player-zone">
+          <button type="button" className="topbar-settings" onClick={() => navigate("settings")} aria-label={tx("打开设置", "Open settings")} aria-current={page === "settings" ? "page" : undefined}><Settings size={17} /></button>
           <div className="topbar-player-menu" ref={profileRef}>
-          <button type="button" className="topbar-player-trigger" onClick={toggleProfile} aria-expanded={profileOpen} aria-haspopup="menu">
+          <button type="button" className={`topbar-player-trigger ${authStatus === "authenticated" ? "" : "guest-direct"}`} onClick={handlePlayerTrigger} aria-expanded={authStatus === "authenticated" ? profileOpen : undefined} aria-haspopup={authStatus === "authenticated" ? "menu" : undefined}>
             {authUser
               ? <PlayerAvatar displayName={authUser.displayName} preset={authUser.avatarPreset} size="choice" />
               : <span className="topbar-avatar-fallback"><Crosshair size={17} /></span>}
             <span className="topbar-player-name">{playerName}</span>
-            <ChevronDown className={profileOpen ? "open" : ""} size={15} />
-            <span className="topbar-xp-track" aria-label={`${progress.currentXp} / ${progress.requiredXp} ${tx("经验", "XP")}`}><i style={{ width: `${progressPercent}%` }} /></span>
+            {authStatus === "authenticated" && <ChevronDown className={profileOpen ? "open" : ""} size={15} />}
           </button>
           <AnimatePresence>
-            {profileOpen && (
+            {profileOpen && authStatus === "authenticated" && authUser && (
               <motion.div
                 className="topbar-profile-popover"
                 role="menu"
@@ -428,21 +439,34 @@ function TopNavigation() {
                   </div>
                 </header>
                 <button type="button" role="menuitem" onClick={() => navigate("profile")}>
-                  {authStatus === "authenticated" ? <UserRound size={16} /> : <LogIn size={16} />}
-                  {authStatus === "authenticated" ? tx("个人中心", "Account center") : tx("登录 / 注册", "Sign in / Register")}
+                  <UserRound size={16} />
+                  {tx("个人中心", "Account center")}
                   <ChevronRight size={15} />
                 </button>
-                {authStatus === "authenticated" && <button type="button" role="menuitem" className="danger" onClick={() => { setProfileOpen(false); setLogoutConfirmOpen(true); }}><LogOut size={16} />{tx("退出登录", "Sign out")}</button>}
+                <button
+                  type="button"
+                  role="menuitem"
+                  className={`danger ${logoutArmed ? "armed" : ""}`}
+                  aria-pressed={logoutArmed}
+                  onClick={() => {
+                    if (!logoutArmed) {
+                      setLogoutArmed(true);
+                      return;
+                    }
+                    setProfileOpen(false);
+                    setLogoutArmed(false);
+                    void logout();
+                  }}
+                >
+                  {logoutArmed ? <Check size={16} /> : <LogOut size={16} />}
+                  {logoutArmed ? tx("确认退出", "Confirm sign out") : tx("退出登录", "Sign out")}
+                </button>
               </motion.div>
             )}
           </AnimatePresence>
           </div>
-          <button type="button" className="topbar-settings" onClick={() => navigate("settings")} aria-label={tx("打开设置", "Open settings")} aria-current={page === "settings" ? "page" : undefined}><Settings size={18} /></button>
         </div>
       </header>
-      <AnimatePresence>
-        {logoutConfirmOpen && <ConfirmationDialog icon={LogOut} title={tx("退出登录？", "Sign out?")} description={tx("确认退出当前账户？本机保存的训练设置不会受到影响。", "Sign out of the current account? Local training settings will be kept.")} confirmLabel={tx("确认退出", "Sign out")} onCancel={() => setLogoutConfirmOpen(false)} onConfirm={() => { void confirmLogout(); }} busy={authBusy === "logout"} />}
-      </AnimatePresence>
     </>
   );
 }
@@ -548,7 +572,7 @@ function Panel({
     </section>
   );
 }
-type FutureHubKind = "progress" | "tools" | "ranking";
+type FutureHubKind = "progress" | "workshop" | "ranking";
 
 const futureHubContent: Record<FutureHubKind, {
   title: [string, string];
@@ -566,14 +590,14 @@ const futureHubContent: Record<FutureHubKind, {
       { icon: CalendarDays, title: ["训练计划", "Training plan"] },
     ],
   },
-  tools: {
-    title: ["工具", "Tools"],
-    description: ["灵敏度、准星与训练环境校准会在这里集中管理。", "Sensitivity, crosshair, and training calibration will be managed here."],
-    icon: Gauge,
+  workshop: {
+    title: ["工坊", "Workshop"],
+    description: ["发现玩家创作的训练地图，也可以从模板开始制作自己的训练。", "Discover community-made maps or build your own training from a template."],
+    icon: Blocks,
     modules: [
-      { icon: Target, title: ["灵敏度换算", "Sensitivity converter"] },
-      { icon: Crosshair, title: ["准星工具", "Crosshair tools"] },
-      { icon: Gauge, title: ["输入与性能", "Input and performance"] },
+      { icon: Gamepad2, title: ["社区地图", "Community maps"] },
+      { icon: Hammer, title: ["创建地图", "Create a map"] },
+      { icon: UserRound, title: ["我的作品", "My creations"] },
     ],
   },
   ranking: {
@@ -1555,7 +1579,7 @@ function App() {
             <HomePage />
           ) : page === "modes" ? (
             <ModesPage />
-          ) : page === "progress" || page === "tools" || page === "ranking" ? (
+          ) : page === "progress" || page === "workshop" || page === "ranking" ? (
             <FutureHubPage kind={page} />
           ) : page === "profile" ? (
             <ProfilePage />
