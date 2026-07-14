@@ -1,0 +1,81 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" preserveAspectRatio="xMidYMid slice">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#02070c"/>
+      <stop offset="0.56" stop-color="#050d15"/>
+      <stop offset="1" stop-color="#02060b"/>
+    </linearGradient>
+    <radialGradient id="coldLight" cx="50%" cy="42%" r="58%">
+      <stop offset="0" stop-color="#123247" stop-opacity="0.56"/>
+      <stop offset="0.52" stop-color="#071521" stop-opacity="0.22"/>
+      <stop offset="1" stop-color="#02070c" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="violetLight" cx="82%" cy="18%" r="42%">
+      <stop offset="0" stop-color="#5d4a92" stop-opacity="0.13"/>
+      <stop offset="1" stop-color="#5d4a92" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="cyanLine" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#61e7ee" stop-opacity="0"/>
+      <stop offset="0.45" stop-color="#61e7ee" stop-opacity="0.5"/>
+      <stop offset="0.55" stop-color="#61e7ee" stop-opacity="0.5"/>
+      <stop offset="1" stop-color="#61e7ee" stop-opacity="0"/>
+    </linearGradient>
+    <pattern id="grid" width="80" height="80" patternUnits="userSpaceOnUse">
+      <path d="M80 0H0V80" fill="none" stroke="#7be9ef" stroke-opacity="0.055" stroke-width="1"/>
+    </pattern>
+  </defs>
+
+  <rect width="1920" height="1080" fill="url(#bg)"/>
+  <rect width="1920" height="1080" fill="url(#coldLight)"/>
+  <rect width="1920" height="1080" fill="url(#violetLight)"/>
+  <rect width="1920" height="1080" fill="url(#grid)"/>
+
+  <path d="M0 0h410L650 485 350 1080H0Z" fill="#06121b" fill-opacity="0.88"/>
+  <path d="M1920 0h-410l-240 485 300 595h350Z" fill="#06121b" fill-opacity="0.88"/>
+  <path d="M0 0h410L650 485" fill="none" stroke="#4fcbd4" stroke-opacity="0.12"/>
+  <path d="M1920 0h-410l-240 485" fill="none" stroke="#4fcbd4" stroke-opacity="0.12"/>
+
+  <g fill="none" stroke="#70e6ed" stroke-opacity="0.11">
+    <path d="M520 0 760 485 580 1080"/>
+    <path d="M1400 0 1160 485 1340 1080"/>
+    <path d="M705 95h510l115 390-146 380H736L590 485Z"/>
+    <path d="M765 180h390l82 305-105 286H788L683 485Z"/>
+  </g>
+
+  <g fill="none" stroke="#63dce4" stroke-opacity="0.09">
+    <path d="M960 485 0 1080"/>
+    <path d="M960 485 320 1080"/>
+    <path d="M960 485 640 1080"/>
+    <path d="M960 485 960 1080"/>
+    <path d="M960 485 1280 1080"/>
+    <path d="M960 485 1600 1080"/>
+    <path d="M960 485 1920 1080"/>
+    <path d="M0 650h1920"/>
+    <path d="M0 760h1920"/>
+    <path d="M0 900h1920"/>
+  </g>
+
+  <g fill="#0a1a24" stroke="#55d7df" stroke-opacity="0.15">
+    <path d="M80 235h315l80 145-80 145H80Z"/>
+    <path d="M1840 235h-315l-80 145 80 145h315Z"/>
+  </g>
+  <g fill="none" stroke="#67e4eb" stroke-opacity="0.24">
+    <path d="M108 270h224"/>
+    <path d="M108 300h152"/>
+    <path d="M1812 270h-224"/>
+    <path d="M1812 300h-152"/>
+    <path d="M78 544h286"/>
+    <path d="M1842 544h-286"/>
+  </g>
+
+  <rect x="620" y="484" width="680" height="1" fill="url(#cyanLine)"/>
+  <rect x="0" y="1016" width="1920" height="1" fill="url(#cyanLine)" opacity="0.45"/>
+
+  <g fill="#6ce8ef" fill-opacity="0.36">
+    <rect x="300" y="196" width="42" height="2"/>
+    <rect x="352" y="196" width="16" height="2"/>
+    <rect x="1552" y="196" width="68" height="2"/>
+    <rect x="1680" y="588" width="74" height="2"/>
+    <rect x="166" y="618" width="62" height="2"/>
+  </g>
+</svg>

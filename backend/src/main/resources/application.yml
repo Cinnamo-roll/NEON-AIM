@@ -34,3 +34,11 @@ app:
   cors:
     allowed-origins:
       - ${FRONTEND_ORIGIN:http://127.0.0.1:5173}
+      - ${FRONTEND_LOCALHOST_ORIGIN:http://localhost:5173}
+  auth:
+    issuer: neon-aim
+    jwt-secret: ${AUTH_JWT_SECRET:local-neon-aim-development-secret-change-before-production}
+    access-token-ttl: PT15M
+    refresh-token-ttl: P30D
+    refresh-cookie-name: neon_refresh
+    refresh-cookie-secure: ${AUTH_COOKIE_SECURE:false}

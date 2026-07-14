@@ -10,6 +10,9 @@ export const DEFAULT_TRAINING_SETTINGS: TrainingSettings = {
   invertY: false,
   volume: 0.55,
   muted: false,
+  interfaceVolume: 0.9,
+  interfaceMuted: false,
+  language: "zh-CN",
   crosshairColor: "#71f6ff",
   crosshairTop: true,
   crosshairBottom: true,
@@ -34,9 +37,12 @@ export const DEFAULT_TRAINING_SETTINGS: TrainingSettings = {
   showFps: true,
 };
 
-export type ConfigurableCategory = "input" | "crosshair" | "graphics" | "hud" | "audio";
+export type ConfigurableCategory = "general" | "input" | "crosshair" | "graphics" | "hud" | "audio";
 
 export const CATEGORY_DEFAULTS: Record<ConfigurableCategory, Partial<TrainingSettings>> = {
+  general: {
+    language: DEFAULT_TRAINING_SETTINGS.language,
+  },
   input: {
     sensitivity: DEFAULT_TRAINING_SETTINGS.sensitivity,
     mouseDpi: DEFAULT_TRAINING_SETTINGS.mouseDpi,
@@ -76,6 +82,8 @@ export const CATEGORY_DEFAULTS: Record<ConfigurableCategory, Partial<TrainingSet
   audio: {
     volume: DEFAULT_TRAINING_SETTINGS.volume,
     muted: DEFAULT_TRAINING_SETTINGS.muted,
+    interfaceVolume: DEFAULT_TRAINING_SETTINGS.interfaceVolume,
+    interfaceMuted: DEFAULT_TRAINING_SETTINGS.interfaceMuted,
   },
 };
 
@@ -146,5 +154,12 @@ export function sanitizeTrainingSettings(candidate: unknown): TrainingSettings {
       .filter((key) => source[key] !== undefined)
       .map((key) => [key, source[key]]),
   ) as Partial<TrainingSettings>;
-  return { ...DEFAULT_TRAINING_SETTINGS, ...legacyCrosshair, ...known };
+  const merged = { ...DEFAULT_TRAINING_SETTINGS, ...legacyCrosshair, ...known };
+  const interfaceVolume = Number(merged.interfaceVolume);
+  return {
+    ...merged,
+    language: merged.language === "en-US" ? "en-US" : "zh-CN",
+    interfaceVolume: Number.isFinite(interfaceVolume) ? Math.min(1, Math.max(0, interfaceVolume)) : DEFAULT_TRAINING_SETTINGS.interfaceVolume,
+    interfaceMuted: Boolean(merged.interfaceMuted),
+  };
 }

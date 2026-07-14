@@ -53,6 +53,9 @@ export interface TrainingSettings {
   invertY: boolean;
   volume: number;
   muted: boolean;
+  interfaceVolume: number;
+  interfaceMuted: boolean;
+  language: import("../../i18n").AppLanguage;
   crosshairColor: string;
   crosshairTop: boolean;
   crosshairBottom: boolean;

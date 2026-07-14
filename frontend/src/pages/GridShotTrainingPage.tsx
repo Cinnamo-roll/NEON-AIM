@@ -16,7 +16,8 @@ import { AudioManager, countdownWarningSeconds } from "../game/audio/AudioManage
 import { CanvasPerformanceMonitor, RenderScheduler } from "../game/performance/PerformanceMonitor";
 import { usePerformanceStore } from "../game/performance/performanceStore";
 import { GRID_SHOT_QA_DURATION } from "../game/qa/gridShotQa";
-import { getGridShotScene, getGridShotTargetSize, type GridShotModeSettings } from "../game/modes/gridShot/gridShotConfig";
+import { getGridShotTargetSize, type GridShotModeSettings } from "../game/modes/gridShot/gridShotConfig";
+import { tx } from "../i18n";
 import type {
   PointerInputDebugSnapshot,
   PointerInputMode,
@@ -49,6 +50,19 @@ import "../game/session/finish.css";
 
 const QA_DURATION = GRID_SHOT_QA_DURATION;
 const COMBO_MILESTONES = [10, 20, 30, 50];
+const HIT_FEEDBACK_LABELS: Record<string, [string, string]> = {
+  FLOW: ["极快", "Flow"],
+  FAST: ["快速", "Fast"],
+  GOOD: ["良好", "Good"],
+  STEADY: ["稳定", "Steady"],
+  SLOW: ["偏慢", "Slow"],
+};
+
+const targetSizeLabels = {
+  small: ["小", "Small"],
+  medium: ["中", "Medium"],
+  large: ["大", "Large"],
+} as const;
 
 type FeedbackSlot = {
   id: number;
@@ -87,7 +101,6 @@ export function GridShotTrainingPage({ settings, gridShotSettings, onHome, onApp
   const debugInput = import.meta.env.DEV && query.get("debugInput") === "1";
   const visualMode = qaMode || devVisual;
   const duration = qaMode ? QA_DURATION : devVisual ? 30 : devEndSession ? 3 : gridShotSettings.duration;
-  const activeScene = getGridShotScene(gridShotSettings.sceneId);
   const activeTargetSize = getGridShotTargetSize(gridShotSettings.targetSize);
 
   const machineRef = useRef<TrainingSessionMachine>(createTrainingSessionMachine(crypto.randomUUID()));
@@ -175,7 +188,7 @@ export function GridShotTrainingPage({ settings, gridShotSettings, onHome, onApp
   }, [schedule]);
 
   const showMilestone = useCallback((combo: number) => {
-    setMilestone(`COMBO ×${combo}|${combo >= 50 ? "HIGH FLOW" : "RHYTHM STABLE"}`);
+    setMilestone(`${tx("连击", "Combo")} ×${combo}|${combo >= 50 ? tx("状态火热", "ON FIRE") : tx("节奏稳定", "RHYTHM LOCKED")}`);
     schedule(() => setMilestone(""), 760);
     audio.play("combo");
   }, [audio, schedule]);
@@ -535,14 +548,14 @@ export function GridShotTrainingPage({ settings, gridShotSettings, onHome, onApp
           >
             <strong>+{slot.score}</strong>
             <span>
-              {slot.label !== "FIRST" && slot.label}
+              {slot.label !== "FIRST" && HIT_FEEDBACK_LABELS[slot.label] && tx(...HIT_FEEDBACK_LABELS[slot.label])}
               {slot.interval !== null ? `${slot.label !== "FIRST" ? " · " : ""}${Math.round(slot.interval)} ms` : ""}
             </span>
-            {slot.combo >= 10 && <small>COMBO ×{slot.combo}</small>}
-            {slot.stable && <em>STABLE +5</em>}
+            {slot.combo >= 10 && <small>{tx("连击", "Combo")} ×{slot.combo}</small>}
+            {slot.stable && <em>{tx("稳定", "Stable")} +5</em>}
           </div>
         ))}
-        {missMarker && <div className="miss-feedback">MISS</div>}
+        {missMarker && <div className="miss-feedback">{tx("未命中", "MISS")}</div>}
       </div>
 
       {impactFlash.id > 0 && gridShotSettings.screenGlow > 0 && (
@@ -561,46 +574,43 @@ export function GridShotTrainingPage({ settings, gridShotSettings, onHome, onApp
       )}
       {trainingState === "ready" && (
         <div className="training-overlay ready-panel">
-          <span className="eyebrow">CLICKING / FOUNDATION 01</span>
           <h1>GRID <b>SHOT</b></h1>
-          <p>看清目标，准星停稳，再打出下一枪。</p>
           <div className="ready-metrics">
-            <span>训练时长<b>{duration} 秒</b></span>
-            <span>同时目标<b>3 个</b></span>
-            <span>训练场景<b>{activeScene.name}</b></span>
-            <span>目标尺寸<b>{activeTargetSize.label}</b></span>
+            <span>{tx("训练时长", "Duration")}<b>{duration} {tx("秒", "sec")}</b></span>
+            <span>{tx("同时目标", "Active targets")}<b>3</b></span>
+            <span>{tx("训练场景", "Scene")}<b>{tx("训练舱", "Training chamber")}</b></span>
+            <span>{tx("目标尺寸", "Target size")}<b>{tx(targetSizeLabels[activeTargetSize.id][0], targetSizeLabels[activeTargetSize.id][1])}</b></span>
           </div>
           <div className="ready-actions">
-            <button className="primary" onClick={start}><Play size={18} />开始训练</button>
-            <button onClick={() => setTrainingSettingsOpen(true)}><SlidersHorizontal size={17} />训练设置</button>
-            <button onClick={onHome}><Home size={17} />返回主页</button>
+            <button className="primary" onClick={start}><Play size={18} />{tx("开始训练", "Start training")}</button>
+            <button onClick={() => setTrainingSettingsOpen(true)}><SlidersHorizontal size={17} />{tx("训练设置", "Training settings")}</button>
+            <button onClick={onHome}><Home size={17} />{tx("返回大厅", "Back to lobby")}</button>
           </div>
         </div>
       )}
 
       {trainingState === "countdown" && (
         <div className="countdown-overlay">
-          <span>GET READY</span>
-          <strong key={countdown}>{countdown || "START"}</strong>
+          <span>{tx("准备", "READY")}</span>
+          <strong key={countdown}>{countdown || tx("开始", "GO")}</strong>
         </div>
       )}
 
       {trainingState === "paused" && (
         <div className="pause-backdrop">
           <div className="training-overlay pause-panel">
-            <span className="eyebrow">SESSION PAUSED</span>
-            <h2>训练已暂停</h2>
+            <h2>{tx("训练已暂停", "Training paused")}</h2>
             <div className="pause-metrics">
-              <span>当前得分<b>{stats.score.toLocaleString()}</b></span>
-              <span>准确率<b>{accuracy}%</b></span>
+              <span>{tx("当前得分", "Score")}<b>{stats.score.toLocaleString()}</b></span>
+              <span>{tx("准确率", "Accuracy")}<b>{accuracy}%</b></span>
               <span>Combo<b>×{stats.combo}</b></span>
-              <span>剩余时间<b>{remainingLabel}</b></span>
+              <span>{tx("剩余时间", "Time left")}<b>{remainingLabel}</b></span>
             </div>
             <div className="pause-actions">
-              <button className="primary" onClick={visualMode ? enterPlaying : requestLock}><Play size={18} />继续训练<kbd>ESC</kbd></button>
-              <button onClick={restart}><RotateCcw size={17} />重新开始<kbd>R</kbd></button>
-              <button onClick={() => setSettingsOpen(true)}><SettingsIcon size={17} />系统设置<kbd>S</kbd></button>
-              <button onClick={onHome}><Home size={17} />退出训练<kbd>Q</kbd></button>
+              <button className="primary" onClick={visualMode ? enterPlaying : requestLock}><Play size={18} />{tx("继续训练", "Resume")}<kbd>ESC</kbd></button>
+              <button onClick={restart}><RotateCcw size={17} />{tx("重新开始", "Restart")}<kbd>R</kbd></button>
+              <button onClick={() => setSettingsOpen(true)}><SettingsIcon size={17} />{tx("系统设置", "System settings")}<kbd>S</kbd></button>
+              <button onClick={onHome}><Home size={17} />{tx("退出训练", "Exit training")}<kbd>Q</kbd></button>
             </div>
           </div>
         </div>
@@ -608,14 +618,13 @@ export function GridShotTrainingPage({ settings, gridShotSettings, onHome, onApp
 
       {trainingState === "finishing" && (
         <div className="finishing-summary">
-          <span>SESSION COMPLETE</span>
+          <span>{tx("训练完成", "TRAINING COMPLETE")}</span>
           <strong>{stats.score.toLocaleString()}</strong>
-          <small>TRAINING COMPLETE</small>
         </div>
       )}
 
       {settingsOpen && (
-        <div className="in-training-settings-layer" role="dialog" aria-modal="true" aria-label="系统设置">
+        <div className="in-training-settings-layer" role="dialog" aria-modal="true" aria-label={tx("系统设置", "System settings")}>
           <SettingsWorkspace
             settings={settings}
             onApply={onApplySettings}

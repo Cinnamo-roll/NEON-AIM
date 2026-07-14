@@ -7,6 +7,7 @@ import {
   Copy,
   Crosshair as CrosshairIcon,
   Eye,
+  Languages,
   MonitorCog,
   MousePointer2,
   RotateCcw,
@@ -17,6 +18,8 @@ import {
 import { TrainingCrosshair } from "../components/training/Crosshair";
 import { GridShotSettingsPreview } from "../components/training/GridShotSettingsPreview";
 import { GameIcon } from "../components/GameIcon";
+import { interfaceAudio } from "../game/audio/interfaceAudio";
+import { tx } from "../i18n";
 import { FPS_OPTIONS, type FpsLimit } from "../game/performance/frameRate";
 import {
   canonicalFromProfile,
@@ -35,23 +38,32 @@ import {
 } from "../game/settings/crosshairPresets";
 import type { TrainingSettings } from "../game/types/training";
 
-type Tab = "input" | "crosshair" | "display" | "audio";
+type Tab = "general" | "input" | "crosshair" | "display" | "audio";
 
-const tabs: Array<{ id: Tab; label: string; icon: typeof MousePointer2 }> = [
-  { id: "input", label: "控制", icon: MousePointer2 },
-  { id: "crosshair", label: "准星", icon: CrosshairIcon },
-  { id: "display", label: "显示", icon: MonitorCog },
-  { id: "audio", label: "音频", icon: Volume2 },
+const tabs: Array<{ id: Tab; zh: string; en: string; icon: typeof MousePointer2 }> = [
+  { id: "general", zh: "通用", en: "General", icon: Languages },
+  { id: "input", zh: "控制", en: "Controls", icon: MousePointer2 },
+  { id: "crosshair", zh: "准星", en: "Crosshair", icon: CrosshairIcon },
+  { id: "display", zh: "显示", en: "Display", icon: MonitorCog },
+  { id: "audio", zh: "音频", en: "Audio", icon: Volume2 },
 ];
 
 const GRAPHICS_KEYS: Array<keyof TrainingSettings> = [
   "fpsLimit", "renderScale", "dprMode", "graphicsPreset", "lowSpec", "antialiasEnabled",
 ];
 
-function SettingRow({ label, help, value, children }: { label: string; help: string; value?: string; children: React.ReactNode }) {
+const crosshairPresetEnglish: Record<CrosshairPresetId, string> = {
+  cross: "Cross",
+  "cross-dot": "Cross + dot",
+  dot: "Dot",
+  circle: "Circle",
+  "t-shape": "T-shape",
+};
+
+function SettingRow({ label, help, value, children }: { label: string; help?: string; value?: string; children: React.ReactNode }) {
   return (
     <div className="setting-row">
-      <div className="setting-copy"><b>{label}</b><small>{help}</small></div>
+      <div className="setting-copy"><b>{label}</b>{help && <small>{help}</small>}</div>
       <output className={value ? "" : "empty"}>{value ?? ""}</output>
       <div className="setting-control">{children}</div>
     </div>
@@ -81,8 +93,8 @@ function NumberControl({ label, value, min, max, step = 1, onChange }: { label: 
         }}
       />
       <span className="number-control-stepper">
-        <button type="button" aria-label={`增加${label}`} disabled={value >= max} onClick={() => adjust(1)}><ChevronUp size={12} /></button>
-        <button type="button" aria-label={`减少${label}`} disabled={value <= min} onClick={() => adjust(-1)}><ChevronDown size={12} /></button>
+        <button type="button" aria-label={`${tx("增加", "Increase ")}${label}`} disabled={value >= max} onClick={() => adjust(1)}><ChevronUp size={12} /></button>
+        <button type="button" aria-label={`${tx("减少", "Decrease ")}${label}`} disabled={value <= min} onClick={() => adjust(-1)}><ChevronDown size={12} /></button>
       </span>
     </span>
   );
@@ -93,8 +105,8 @@ function RangeControl({ label, value, min, max, step, onChange }: { label: strin
   return <input className="range-control" aria-label={label} type="range" value={value} min={min} max={max} step={step} style={{ "--range-progress": `${percent}%` } as React.CSSProperties} onChange={(event) => onChange(Number(event.target.value))} />;
 }
 
-function SelectControl({ label, value, onChange, children }: { label: string; value: string | number; onChange: (value: string) => void; children: React.ReactNode }) {
-  return <span className="select-control"><select aria-label={label} value={String(value)} onChange={(event) => onChange(event.target.value)}>{children}</select><ChevronDown size={15} /></span>;
+function SelectControl({ label, value, onChange, children, volume, muted }: { label: string; value: string | number; onChange: (value: string) => void; children: React.ReactNode; volume: number; muted: boolean }) {
+  return <span className="select-control"><select aria-label={label} value={String(value)} onChange={(event) => { interfaceAudio.play("select", volume, muted); onChange(event.target.value); }}>{children}</select><ChevronDown size={15} /></span>;
 }
 
 const gameTriggerLabels: Record<string, string> = {
@@ -104,21 +116,24 @@ const gameTriggerLabels: Record<string, string> = {
   pubg: "PUBG",
 };
 
-function GameSelectControl({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
+function GameSelectControl({ label, value, onChange, volume, muted }: { label: string; value: string; onChange: (value: string) => void; volume: number; muted: boolean }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const menuId = useId();
   const selected = gameProfilesForDisplay.find((profile) => profile.id === value) ?? gameProfilesForDisplay[0];
-  const groupLabel = (index: number) => gameProfilesForDisplay[index].id === "neon" ? "TRAINER" : gameProfilesForDisplay[index].name.charAt(0).toUpperCase();
+  const groupLabel = (index: number) => gameProfilesForDisplay[index].id === "neon" ? "N" : gameProfilesForDisplay[index].name.charAt(0).toUpperCase();
 
   useEffect(() => {
     if (!open) return;
     const closeOutside = (event: PointerEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+      if (!rootRef.current?.contains(event.target as Node)) {
+        interfaceAudio.play("close", volume, muted);
+        setOpen(false);
+      }
     };
     document.addEventListener("pointerdown", closeOutside);
     return () => document.removeEventListener("pointerdown", closeOutside);
-  }, [open]);
+  }, [muted, open, volume]);
 
   const focusOption = (index: number) => {
     window.requestAnimationFrame(() => {
@@ -127,12 +142,14 @@ function GameSelectControl({ label, value, onChange }: { label: string; value: s
   };
   const openMenu = () => {
     const selectedIndex = Math.max(0, gameProfilesForDisplay.findIndex((profile) => profile.id === value));
+    interfaceAudio.play("open", volume, muted);
     setOpen(true);
     focusOption(selectedIndex);
   };
   const handleOptionKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>, index: number) => {
     if (event.key === "Escape") {
       event.preventDefault();
+      interfaceAudio.play("close", volume, muted);
       setOpen(false);
       rootRef.current?.querySelector<HTMLButtonElement>(".game-select-trigger")?.focus();
     } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
@@ -154,22 +171,30 @@ function GameSelectControl({ label, value, onChange }: { label: string; value: s
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-controls={menuId}
-        onClick={() => open ? setOpen(false) : openMenu()}
+        onClick={() => {
+          if (open) {
+            interfaceAudio.play("close", volume, muted);
+            setOpen(false);
+          } else {
+            openMenu();
+          }
+        }}
         onKeyDown={(event) => {
           if (!open && (event.key === "ArrowDown" || event.key === "Enter" || event.key === " ")) {
             event.preventDefault();
             openMenu();
           } else if (event.key === "Escape") {
+            if (open) interfaceAudio.play("close", volume, muted);
             setOpen(false);
           }
         }}
       >
         <GameIcon gameId={selected.id} />
-        <span><b>{gameTriggerLabels[selected.id] ?? selected.name}</b><small>{selected.id === "neon" ? "训练器" : "游戏灵敏度"}</small></span>
+        <span><b>{gameTriggerLabels[selected.id] ?? selected.name}</b><small>{selected.id === "neon" ? tx("训练器", "Trainer") : tx("游戏灵敏度", "Game sensitivity")}</small></span>
         <ChevronDown size={15} />
       </button>
       {open && (
-        <div className="game-select-menu" id={menuId} role="listbox" aria-label={`${label}列表`}>
+        <div className="game-select-menu" id={menuId} role="listbox" aria-label={`${label}${tx("列表", " list")}`}>
           {gameProfilesForDisplay.map((profile, index) => {
             const group = groupLabel(index);
             const previousGroup = index > 0 ? groupLabel(index - 1) : "";
@@ -182,11 +207,11 @@ function GameSelectControl({ label, value, onChange }: { label: string; value: s
                   aria-selected={profile.id === value}
                   data-game-option
                   className={profile.id === value ? "selected" : ""}
-                  onClick={() => { onChange(profile.id); setOpen(false); }}
+                  onClick={() => { interfaceAudio.play("select", volume, muted); onChange(profile.id); setOpen(false); }}
                   onKeyDown={(event) => handleOptionKeyDown(event, index)}
                 >
                   <GameIcon gameId={profile.id} />
-                  <span><b>{profile.name}</b><small>{profile.id === "neon" ? "训练器" : profile.status === "verified" ? "已验证" : "参考数据"}</small></span>
+                  <span><b>{profile.name}</b><small>{profile.id === "neon" ? tx("训练器", "Trainer") : profile.status === "verified" ? tx("已验证", "Verified") : tx("参考数据", "Reference")}</small></span>
                   {profile.id === value && <Check size={15} />}
                 </button>
               </Fragment>
@@ -199,16 +224,16 @@ function GameSelectControl({ label, value, onChange }: { label: string; value: s
 }
 
 function Toggle({ label, checked, onChange }: { label: string; checked: boolean; onChange: (checked: boolean) => void }) {
-  return <button type="button" role="switch" aria-label={label} aria-checked={checked} className={`toggle-control ${checked ? "on" : ""}`} onClick={() => onChange(!checked)}><span /><b>{checked ? "开启" : "关闭"}</b></button>;
+  return <button type="button" role="switch" aria-label={label} aria-checked={checked} className={`toggle-control ${checked ? "on" : ""}`} onClick={() => onChange(!checked)}><span /><b>{checked ? tx("开启", "On") : tx("关闭", "Off")}</b></button>;
 }
 
 function CrosshairPresetPicker({ settings, onApply }: { settings: TrainingSettings; onApply: (value: CrosshairPresetId) => void }) {
   return (
-    <div className="crosshair-preset-grid" role="group" aria-label="准星快捷样式">
+    <div className="crosshair-preset-grid" role="group" aria-label={tx("准星快捷样式", "Crosshair presets")}>
       {CROSSHAIR_PRESETS.map((preset) => (
-        <button type="button" aria-label={`应用${preset.label}样式`} onClick={() => onApply(preset.id)} key={preset.id}>
+        <button type="button" aria-label={`${tx("应用", "Apply ")}${tx(preset.label, crosshairPresetEnglish[preset.id])}${tx("样式", " preset")}`} onClick={() => onApply(preset.id)} key={preset.id}>
           <span className="crosshair-preset-preview"><TrainingCrosshair settings={{ ...settings, ...preset.parameters, crosshairOpacity: 1 }} /></span>
-          <b>{preset.label}</b>
+          <b>{tx(preset.label, crosshairPresetEnglish[preset.id])}</b>
         </button>
       ))}
     </div>
@@ -217,24 +242,24 @@ function CrosshairPresetPicker({ settings, onApply }: { settings: TrainingSettin
 
 function CrosshairArmPicker({ settings, onChange }: { settings: TrainingSettings; onChange: (key: "crosshairTop" | "crosshairBottom" | "crosshairLeft" | "crosshairRight", value: boolean) => void }) {
   const arms = [
-    { key: "crosshairTop", label: "上" },
-    { key: "crosshairBottom", label: "下" },
-    { key: "crosshairLeft", label: "左" },
-    { key: "crosshairRight", label: "右" },
+    { key: "crosshairTop", label: tx("上", "Top") },
+    { key: "crosshairBottom", label: tx("下", "Bottom") },
+    { key: "crosshairLeft", label: tx("左", "Left") },
+    { key: "crosshairRight", label: tx("右", "Right") },
   ] as const;
-  return <div className="crosshair-arm-picker" role="group" aria-label="准星线条方向">{arms.map(({ key, label }) => <button type="button" className={settings[key] ? "active" : ""} aria-pressed={settings[key]} onClick={() => onChange(key, !settings[key])} key={key}>{label}</button>)}</div>;
+  return <div className="crosshair-arm-picker" role="group" aria-label={tx("准星线条方向", "Crosshair arm directions")}>{arms.map(({ key, label }) => <button type="button" className={settings[key] ? "active" : ""} aria-pressed={settings[key]} onClick={() => onChange(key, !settings[key])} key={key}>{label}</button>)}</div>;
 }
 
 function SettingsPreview({ tab, settings }: { tab: Tab; settings: TrainingSettings }) {
   if (tab !== "display") return null;
   return (
-    <aside className="settings-inspector settings-preview-panel" aria-label="训练显示预览">
-      <div className="inspector-heading"><Eye size={18} /><div><small>LIVE PREVIEW</small><h3>效果预览</h3></div></div>
-      <div className="preview-reference-note">仅供参考 · 实际效果以全屏训练为准</div>
+    <aside className="settings-inspector settings-preview-panel" aria-label={tx("训练显示预览", "Training display preview")}>
+      <div className="inspector-heading"><Eye size={18} /><div><h3>{tx("效果预览", "Live preview")}</h3></div></div>
+      <div className="preview-reference-note">{tx("仅供参考 · 实际效果以全屏训练为准", "Reference only · Fullscreen training may differ")}</div>
       <div className="grid-shot-settings-preview training-settings-preview" style={{ "--preview-hud-scale": settings.hudScale, "--preview-hud-opacity": settings.hudOpacity } as React.CSSProperties}>
-        <div className="preview-stage-label"><span>TRAINING HUD</span><b>LIVE</b></div>
+        <div className="preview-stage-label"><span>{tx("训练界面", "Training HUD")}</span><b>{tx("实时", "LIVE")}</b></div>
         <GridShotSettingsPreview settings={settings} />
-        <div className="preview-hud"><span>SCORE<b>12,480</b><em>COMBO ×18</em></span><strong>00:38<em>GRID SHOT</em></strong><span>ACCURACY<b>91.4%</b><em>138 TPM</em></span></div>
+        <div className="preview-hud"><span>{tx("得分", "Score")}<b>12,480</b><em>{tx("连击", "Combo")} ×18</em></span><strong>00:38<em>GRID SHOT</em></strong><span>{tx("准确率", "Accuracy")}<b>91.4%</b><em>138 TPM</em></span></div>
         <TrainingCrosshair settings={settings} />
         {settings.showFps && <small>158 FPS · 6.3ms</small>}
       </div>
@@ -242,8 +267,8 @@ function SettingsPreview({ tab, settings }: { tab: Tab; settings: TrainingSettin
   );
 }
 
-function SettingsSection({ eyebrow, title, description, children }: { eyebrow: string; title: string; description: string; children: React.ReactNode }) {
-  return <section className="settings-section"><header><span>{eyebrow}</span><h3>{title}</h3><p>{description}</p></header><div className="settings-section-body">{children}</div></section>;
+function SettingsSection({ title, description, children }: { title: string; description?: string; children: React.ReactNode }) {
+  return <section className="settings-section"><header><h3>{title}</h3>{description && <p>{description}</p>}</header><div className="settings-section-body">{children}</div></section>;
 }
 
 type SettingsWorkspaceProps = {
@@ -255,7 +280,7 @@ type SettingsWorkspaceProps = {
 
 export function SettingsWorkspace({ settings, onApply, onClose, context = "global" }: SettingsWorkspaceProps) {
   const [draft, setDraft] = useState(settings);
-  const [tab, setTab] = useState<Tab>("input");
+  const [tab, setTab] = useState<Tab>("general");
   const [confirm, setConfirm] = useState(0);
   const [source, setSource] = useState("cs2");
   const [target, setTarget] = useState("neon");
@@ -287,6 +312,8 @@ export function SettingsWorkspace({ settings, onApply, onClose, context = "globa
   const sourceCanonical = canonicalFromProfile(sourceSensitivityForCanonical, draft.mouseDpi, sourceProfile);
   const converted = sensitivityFromProfile(sourceCanonical, targetProfile);
   const convertedForTarget = converted === null ? null : target === "neon" ? converted / draft.horizontalRatio : converted;
+  const interfaceVolume = draft.volume * draft.interfaceVolume;
+  const interfaceMuted = draft.muted || draft.interfaceMuted;
   const patch = <K extends keyof TrainingSettings>(key: K, value: TrainingSettings[K]) => setDraft((current) => ({ ...current, [key]: value }));
   const patchGraphics = <K extends keyof TrainingSettings>(key: K, value: TrainingSettings[K]) => patch(key, value);
   const apply = () => {
@@ -307,100 +334,117 @@ export function SettingsWorkspace({ settings, onApply, onClose, context = "globa
     window.setTimeout(() => setCopied(false), 1200);
   };
 
+  const generalContent = (
+    <>
+      <SettingsSection title={tx("语言", "Language")}>
+        <SettingRow label={tx("界面语言", "Interface language")}>
+          <div className="language-choice" role="group" aria-label={tx("界面语言", "Interface language")}>
+            <button type="button" className={draft.language === "zh-CN" ? "active" : ""} aria-pressed={draft.language === "zh-CN"} onClick={() => patch("language", "zh-CN")}>中文</button>
+            <button type="button" className={draft.language === "en-US" ? "active" : ""} aria-pressed={draft.language === "en-US"} onClick={() => patch("language", "en-US")}>English</button>
+          </div>
+        </SettingRow>
+      </SettingsSection>
+    </>
+  );
+
   const inputContent = (
     <>
-      <SettingsSection eyebrow="MOUSE CONTROL" title="鼠标控制" description="调整鼠标移动与视角转动的手感。大多数玩家只需要设置基础灵敏度和 DPI。">
-        <SettingRow label="基础灵敏度" help="数值越高，移动相同距离时视角转动得越快" value={draft.sensitivity.toFixed(3)}><NumberControl label="基础灵敏度" value={draft.sensitivity} min={0.01} max={10} step={0.001} onChange={(value) => patch("sensitivity", roundSensitivity(value))} /></SettingRow>
-        <SettingRow label="鼠标 DPI" help="填写鼠标软件中正在使用的 DPI，用于计算 cm/360" value={`${draft.mouseDpi} DPI`}><NumberControl label="鼠标 DPI" value={draft.mouseDpi} min={50} max={32000} step={50} onChange={(value) => patch("mouseDpi", value)} /></SettingRow>
-        <SettingRow label="X 轴倍率" help="调整左右移动速度；1.00× 表示使用基础灵敏度" value={`${draft.horizontalRatio.toFixed(2)}×`}><RangeControl label="X 轴倍率" value={draft.horizontalRatio} min={0.1} max={2} step={0.05} onChange={(value) => patch("horizontalRatio", value)} /></SettingRow>
-        <SettingRow label="Y 轴倍率" help="调整上下移动速度；1.00× 表示使用基础灵敏度" value={`${draft.verticalRatio.toFixed(2)}×`}><RangeControl label="Y 轴倍率" value={draft.verticalRatio} min={0.1} max={2} step={0.05} onChange={(value) => patch("verticalRatio", value)} /></SettingRow>
-        <SettingRow label="反转 X 轴" help="反转鼠标左右移动方向"><Toggle label="反转 X 轴" checked={draft.invertX} onChange={(value) => patch("invertX", value)} /></SettingRow>
-        <SettingRow label="反转 Y 轴" help="反转鼠标上下移动方向"><Toggle label="反转 Y 轴" checked={draft.invertY} onChange={(value) => patch("invertY", value)} /></SettingRow>
-        <div className="setting-fact"><MousePointer2 size={17} /><div><b>轴向倍率如何计算？</b><span>左右速度 = 基础灵敏度 × X 轴倍率，上下速度 = 基础灵敏度 × Y 轴倍率。两个倍率都保持 1.00× 时，手感与原来的基础灵敏度完全一致。</span></div></div>
+      <SettingsSection title={tx("鼠标控制", "Mouse control")}>
+        <SettingRow label={tx("基础灵敏度", "Base sensitivity")} value={draft.sensitivity.toFixed(3)}><NumberControl label={tx("基础灵敏度", "Base sensitivity")} value={draft.sensitivity} min={0.01} max={10} step={0.001} onChange={(value) => patch("sensitivity", roundSensitivity(value))} /></SettingRow>
+        <SettingRow label={tx("鼠标 DPI", "Mouse DPI")} value={`${draft.mouseDpi} DPI`}><NumberControl label={tx("鼠标 DPI", "Mouse DPI")} value={draft.mouseDpi} min={50} max={32000} step={50} onChange={(value) => patch("mouseDpi", value)} /></SettingRow>
+        <SettingRow label={tx("X 轴倍率", "X-axis multiplier")} value={`${draft.horizontalRatio.toFixed(2)}×`}><RangeControl label={tx("X 轴倍率", "X-axis multiplier")} value={draft.horizontalRatio} min={0.1} max={2} step={0.05} onChange={(value) => patch("horizontalRatio", value)} /></SettingRow>
+        <SettingRow label={tx("Y 轴倍率", "Y-axis multiplier")} value={`${draft.verticalRatio.toFixed(2)}×`}><RangeControl label={tx("Y 轴倍率", "Y-axis multiplier")} value={draft.verticalRatio} min={0.1} max={2} step={0.05} onChange={(value) => patch("verticalRatio", value)} /></SettingRow>
+        <SettingRow label={tx("反转 X 轴", "Invert X axis")}><Toggle label={tx("反转 X 轴", "Invert X axis")} checked={draft.invertX} onChange={(value) => patch("invertX", value)} /></SettingRow>
+        <SettingRow label={tx("反转 Y 轴", "Invert Y axis")}><Toggle label={tx("反转 Y 轴", "Invert Y axis")} checked={draft.invertY} onChange={(value) => patch("invertY", value)} /></SettingRow>
       </SettingsSection>
 
-      <SettingsSection eyebrow="CM / 360" title="灵敏度转换" description="选择来源游戏并填写当前灵敏度，即可换算出在其他游戏中相同的转身距离。">
+      <SettingsSection title={tx("灵敏度转换", "Sensitivity converter")}>
         <div className="converter-grid">
           <div className="converter-side">
-            <small>来源</small>
-            <GameSelectControl label="来源游戏" value={source} onChange={(value) => { const profile = profiles.find((item) => item.id === value)!; setSource(value); setSourceValue((current) => Math.min(profile.sensitivityMax, Math.max(profile.sensitivityMin, current))); }} />
-            <NumberControl label="来源灵敏度" value={sourceValue} min={sourceProfile.sensitivityMin} max={sourceProfile.sensitivityMax} step={sourceProfile.sensitivityStep} onChange={(value) => setSourceValue(roundSensitivity(Math.min(sourceProfile.sensitivityMax, Math.max(sourceProfile.sensitivityMin, value))))} />
-            <span>{sourceCanonical ? `${sourceCanonical.cmPer360.toFixed(2)} cm / 360` : "需要手动校准"}</span>
+            <small>{tx("来源", "Source")}</small>
+            <GameSelectControl label={tx("来源游戏", "Source game")} value={source} volume={interfaceVolume} muted={interfaceMuted} onChange={(value) => { const profile = profiles.find((item) => item.id === value)!; setSource(value); setSourceValue((current) => Math.min(profile.sensitivityMax, Math.max(profile.sensitivityMin, current))); }} />
+            <NumberControl label={tx("来源灵敏度", "Source sensitivity")} value={sourceValue} min={sourceProfile.sensitivityMin} max={sourceProfile.sensitivityMax} step={sourceProfile.sensitivityStep} onChange={(value) => setSourceValue(roundSensitivity(Math.min(sourceProfile.sensitivityMax, Math.max(sourceProfile.sensitivityMin, value))))} />
+            <span>{sourceCanonical ? `${sourceCanonical.cmPer360.toFixed(2)} cm / 360` : tx("需要手动校准", "Manual calibration required")}</span>
           </div>
-          <button type="button" className="converter-swap" aria-label="交换来源与目标" onClick={() => { if (convertedForTarget !== null) setSourceValue(roundSensitivity(convertedForTarget)); setSource(target); setTarget(source); }}><Shuffle size={18} /></button>
+          <button type="button" className="converter-swap" aria-label={tx("交换来源与目标", "Swap source and target")} onClick={() => { if (convertedForTarget !== null) setSourceValue(roundSensitivity(convertedForTarget)); setSource(target); setTarget(source); }}><Shuffle size={18} /></button>
           <div className="converter-side result">
-            <small>目标</small>
-            <GameSelectControl label="目标游戏" value={target} onChange={setTarget} />
+            <small>{tx("目标", "Target")}</small>
+            <GameSelectControl label={tx("目标游戏", "Target game")} value={target} volume={interfaceVolume} muted={interfaceMuted} onChange={setTarget} />
             <strong>{convertedForTarget?.toFixed(3) ?? "—"}</strong>
-            <span>{target === "neon" && draft.horizontalRatio !== 1 ? `已计入 X 轴倍率 ${draft.horizontalRatio.toFixed(2)}×` : sourceProfile.status === "beta" || targetProfile.status === "beta" ? "参考换算 · 建议进游戏复核" : targetProfile.status === "verified" ? "已验证换算" : "需要手动校准"}</span>
+            <span>{target === "neon" && draft.horizontalRatio !== 1 ? `${tx("已计入 X 轴倍率", "X-axis multiplier included")} ${draft.horizontalRatio.toFixed(2)}×` : sourceProfile.status === "beta" || targetProfile.status === "beta" ? tx("参考换算 · 建议进游戏复核", "Reference conversion · verify in game") : targetProfile.status === "verified" ? tx("已验证换算", "Verified conversion") : tx("需要手动校准", "Manual calibration required")}</span>
           </div>
         </div>
         <div className="converter-actions">
-          <button type="button" onClick={() => void copyConverted()} disabled={convertedForTarget === null}>{copied ? <Check size={16} /> : <Copy size={16} />}{copied ? "已复制" : "复制结果"}</button>
-          {target === "neon" && convertedForTarget !== null && <button type="button" className="primary" onClick={() => patch("sensitivity", roundSensitivity(convertedForTarget))}><Check size={16} />应用到 NEON AIM</button>}
+          <button type="button" onClick={() => void copyConverted()} disabled={convertedForTarget === null}>{copied ? <Check size={16} /> : <Copy size={16} />}{copied ? tx("已复制", "Copied") : tx("复制结果", "Copy result")}</button>
+          {target === "neon" && convertedForTarget !== null && <button type="button" className="primary" onClick={() => patch("sensitivity", roundSensitivity(convertedForTarget))}><Check size={16} />{tx("应用到 NEON AIM", "Apply to NEON AIM")}</button>}
         </div>
       </SettingsSection>
-        <div className="converter-disclaimer">换算以鼠标腰射灵敏度和相同 cm/360 为准，不包含 ADS、瞄具倍率、鼠标加速或游戏内独立轴向倍率。PUBG 使用独立的指数灵敏度曲线；PUBG、Delta Force 与 CrossFire 的结果均建议在游戏训练场完成一次 360° 距离复核。</div>
     </>
   );
 
   const crosshairContent = (
-    <SettingsSection eyebrow="RETICLE" title="准星设置" description="先选一个接近你习惯的样式，再调整颜色、尺寸和结构。">
+    <SettingsSection title={tx("准星", "Crosshair")}>
       <div className="crosshair-editor-hero">
-        <div className="crosshair-workbench"><small>实时预览</small><div className="crosshair-preview-center"><TrainingCrosshair settings={draft} /></div><span>实际尺寸</span></div>
-        <div className="crosshair-presets"><small>快捷样式</small><CrosshairPresetPicker settings={draft} onApply={(value) => setDraft((current) => applyCrosshairPreset(current, value))} /></div>
+        <div className="crosshair-workbench"><div className="crosshair-preview-center"><TrainingCrosshair settings={draft} /></div></div>
+        <div className="crosshair-presets"><small>{tx("快捷样式", "Presets")}</small><CrosshairPresetPicker settings={draft} onApply={(value) => setDraft((current) => applyCrosshairPreset(current, value))} /></div>
       </div>
-      <div className="settings-subsection-label"><span>细节调整</span></div>
-        <SettingRow label="主颜色" help="统一控制线条、中心点和外环颜色" value={draft.crosshairColor.toUpperCase()}><label className="color-control"><input aria-label="准星主颜色" type="color" value={draft.crosshairColor} onChange={(event) => patch("crosshairColor", event.target.value)} /><span style={{ background: draft.crosshairColor }} /></label></SettingRow>
-        <SettingRow label="线条方向" help="分别控制上、下、左、右四条线，可组合出 T 型或不对称准星" value={`${[draft.crosshairTop, draft.crosshairBottom, draft.crosshairLeft, draft.crosshairRight].filter(Boolean).length}/4`}><CrosshairArmPicker settings={draft} onChange={(key, value) => patch(key, value)} /></SettingRow>
-        <SettingRow label="线条粗细" help="四向线条和外环共用的像素宽度" value={`${draft.crosshairThickness}px`}><RangeControl label="准星线条粗细" value={draft.crosshairThickness} min={1} max={5} step={1} onChange={(value) => patch("crosshairThickness", value)} /></SettingRow>
-        <SettingRow label="线条长度" help="控制每条已启用线段的长度" value={`${draft.crosshairLength}px`}><RangeControl label="准星线条长度" value={draft.crosshairLength} min={2} max={20} step={1} onChange={(value) => patch("crosshairLength", value)} /></SettingRow>
-        <SettingRow label="中心间距" help="控制线段与瞄准中心之间的留白" value={`${draft.crosshairGap}px`}><RangeControl label="准星中心间距" value={draft.crosshairGap} min={0} max={14} step={1} onChange={(value) => patch("crosshairGap", value)} /></SettingRow>
-        <SettingRow label="中心圆点" help="独立于线条和外环，可与任意结构叠加"><Toggle label="中心圆点" checked={draft.crosshairCenterDot} onChange={(value) => patch("crosshairCenterDot", value)} /></SettingRow>
-        {draft.crosshairCenterDot && <SettingRow label="圆点大小" help="调整中心圆点的大小" value={`${draft.crosshairDotSize}px`}><RangeControl label="准星圆点大小" value={draft.crosshairDotSize} min={1} max={8} step={1} onChange={(value) => patch("crosshairDotSize", value)} /></SettingRow>}
-        <SettingRow label="外环" help="独立的圆形轮廓，可与线条、中心点同时使用"><Toggle label="准星外环" checked={draft.crosshairRing} onChange={(value) => patch("crosshairRing", value)} /></SettingRow>
-        {draft.crosshairRing && <SettingRow label="外环直径" help="调整外环的整体大小" value={`${draft.crosshairRingDiameter}px`}><RangeControl label="准星外环直径" value={draft.crosshairRingDiameter} min={8} max={40} step={1} onChange={(value) => patch("crosshairRingDiameter", value)} /></SettingRow>}
-        <SettingRow label="准星透明度" help="调整准星整体的透明程度" value={`${Math.round(draft.crosshairOpacity * 100)}%`}><RangeControl label="准星透明度" value={draft.crosshairOpacity} min={0.2} max={1} step={0.05} onChange={(value) => patch("crosshairOpacity", value)} /></SettingRow>
+      <div className="settings-subsection-label"><span>{tx("细节调整", "Fine tuning")}</span></div>
+        <SettingRow label={tx("主颜色", "Primary color")} value={draft.crosshairColor.toUpperCase()}><label className="color-control"><input aria-label={tx("准星主颜色", "Crosshair primary color")} type="color" value={draft.crosshairColor} onChange={(event) => patch("crosshairColor", event.target.value)} /><span style={{ background: draft.crosshairColor }} /></label></SettingRow>
+        <SettingRow label={tx("线条方向", "Arm directions")} value={`${[draft.crosshairTop, draft.crosshairBottom, draft.crosshairLeft, draft.crosshairRight].filter(Boolean).length}/4`}><CrosshairArmPicker settings={draft} onChange={(key, value) => patch(key, value)} /></SettingRow>
+        <SettingRow label={tx("线条粗细", "Thickness")} value={`${draft.crosshairThickness}px`}><RangeControl label={tx("准星线条粗细", "Crosshair thickness")} value={draft.crosshairThickness} min={1} max={5} step={1} onChange={(value) => patch("crosshairThickness", value)} /></SettingRow>
+        <SettingRow label={tx("线条长度", "Length")} value={`${draft.crosshairLength}px`}><RangeControl label={tx("准星线条长度", "Crosshair length")} value={draft.crosshairLength} min={2} max={20} step={1} onChange={(value) => patch("crosshairLength", value)} /></SettingRow>
+        <SettingRow label={tx("中心间距", "Center gap")} value={`${draft.crosshairGap}px`}><RangeControl label={tx("准星中心间距", "Crosshair center gap")} value={draft.crosshairGap} min={0} max={14} step={1} onChange={(value) => patch("crosshairGap", value)} /></SettingRow>
+        <SettingRow label={tx("中心圆点", "Center dot")}><Toggle label={tx("中心圆点", "Center dot")} checked={draft.crosshairCenterDot} onChange={(value) => patch("crosshairCenterDot", value)} /></SettingRow>
+        {draft.crosshairCenterDot && <SettingRow label={tx("圆点大小", "Dot size")} value={`${draft.crosshairDotSize}px`}><RangeControl label={tx("准星圆点大小", "Crosshair dot size")} value={draft.crosshairDotSize} min={1} max={8} step={1} onChange={(value) => patch("crosshairDotSize", value)} /></SettingRow>}
+        <SettingRow label={tx("外环", "Outer ring")}><Toggle label={tx("准星外环", "Crosshair outer ring")} checked={draft.crosshairRing} onChange={(value) => patch("crosshairRing", value)} /></SettingRow>
+        {draft.crosshairRing && <SettingRow label={tx("外环直径", "Ring diameter")} value={`${draft.crosshairRingDiameter}px`}><RangeControl label={tx("准星外环直径", "Crosshair ring diameter")} value={draft.crosshairRingDiameter} min={8} max={40} step={1} onChange={(value) => patch("crosshairRingDiameter", value)} /></SettingRow>}
+        <SettingRow label={tx("透明度", "Opacity")} value={`${Math.round(draft.crosshairOpacity * 100)}%`}><RangeControl label={tx("准星透明度", "Crosshair opacity")} value={draft.crosshairOpacity} min={0.2} max={1} step={0.05} onChange={(value) => patch("crosshairOpacity", value)} /></SettingRow>
     </SettingsSection>
   );
 
   const displayContent = (
-      <SettingsSection eyebrow="DISPLAY" title="显示设置" description="调整画面清晰度、帧率和训练信息的显示方式。">
-        <SettingRow label="FPS 上限" help="通常建议选择“跟随显示器”，也可以限制帧率以降低显卡占用"><SelectControl label="FPS 上限" value={draft.fpsLimit} onChange={(value) => patchGraphics("fpsLimit", (value === "auto" ? "auto" : Number(value)) as FpsLimit)}>{FPS_OPTIONS.filter((option) => option !== "unlimited").map((option) => <option value={option} key={option}>{option === "auto" ? "跟随显示器" : `${option} FPS`}</option>)}</SelectControl></SettingRow>
-        <SettingRow label="渲染比例" help="降低可提升流畅度，提高可让目标和场景边缘更清晰" value={`${Math.round(draft.renderScale * 100)}%`}><SelectControl label="渲染比例" value={draft.renderScale} onChange={(value) => patchGraphics("renderScale", Number(value))}>{[0.5, 0.67, 0.75, 0.85, 1, 1.1, 1.25].map((value) => <option value={value} key={value}>{Math.round(value * 100)}%</option>)}</SelectControl></SettingRow>
-        <SettingRow label="高分屏清晰度" help="高分辨率屏幕可适当提高；选择自动即可适配大多数设备" value={`${effectiveDpr.toFixed(2)}×`}><SelectControl label="高分屏清晰度" value={draft.dprMode} onChange={(value) => patchGraphics("dprMode", value === "auto" ? "auto" : Number(value) as 1)}>{["auto", 1, 1.25, 1.5, 1.75, 2].map((value) => <option value={value} key={value}>{value === "auto" ? "自动" : `${value}×`}</option>)}</SelectControl></SettingRow>
-        <SettingRow label="抗锯齿" help="减少目标和场景边缘的锯齿；下次进入训练时应用"><Toggle label="抗锯齿" checked={draft.antialiasEnabled} onChange={(value) => patchGraphics("antialiasEnabled", value)} /></SettingRow>
-        <div className="render-readout"><span>预计全屏渲染分辨率</span><strong>{Math.round(fullscreenWidth * effectiveDpr)} × {Math.round(fullscreenHeight * effectiveDpr)}</strong><small>按当前显示器全屏尺寸与清晰度估算</small></div>
-        <div className="settings-subsection-label"><span>训练界面</span><small>按自己的阅读习惯调整</small></div>
-      <SettingRow label="HUD 缩放" help="统一缩放成绩、计时和FPS信息" value={`${Math.round(draft.hudScale * 100)}%`}><RangeControl label="HUD 缩放" value={draft.hudScale} min={0.7} max={1.4} step={0.05} onChange={(value) => patch("hudScale", value)} /></SettingRow>
-      <SettingRow label="HUD 透明度" help="不影响准星和目标" value={`${Math.round(draft.hudOpacity * 100)}%`}><RangeControl label="HUD 透明度" value={draft.hudOpacity} min={0.2} max={1} step={0.05} onChange={(value) => patch("hudOpacity", value)} /></SettingRow>
-      <SettingRow label="性能信息" help="在右下角显示FPS与帧时间"><Toggle label="显示性能信息" checked={draft.showFps} onChange={(value) => patch("showFps", value)} /></SettingRow>
+      <SettingsSection title={tx("显示", "Display")}>
+        <SettingRow label={tx("FPS 上限", "FPS limit")} help={tx("限制帧率可降低显卡占用", "A frame cap can reduce GPU load")}><SelectControl label={tx("FPS 上限", "FPS limit")} value={draft.fpsLimit} volume={interfaceVolume} muted={interfaceMuted} onChange={(value) => patchGraphics("fpsLimit", (value === "auto" ? "auto" : Number(value)) as FpsLimit)}>{FPS_OPTIONS.filter((option) => option !== "unlimited").map((option) => <option value={option} key={option}>{option === "auto" ? tx("跟随显示器", "Match display") : `${option} FPS`}</option>)}</SelectControl></SettingRow>
+        <SettingRow label={tx("渲染比例", "Render scale")} help={tx("降低可提升流畅度，提高可让目标和场景边缘更清晰", "Lower for performance, raise for sharper targets and edges")} value={`${Math.round(draft.renderScale * 100)}%`}><SelectControl label={tx("渲染比例", "Render scale")} value={draft.renderScale} volume={interfaceVolume} muted={interfaceMuted} onChange={(value) => patchGraphics("renderScale", Number(value))}>{[0.5, 0.67, 0.75, 0.85, 1, 1.1, 1.25].map((value) => <option value={value} key={value}>{Math.round(value * 100)}%</option>)}</SelectControl></SettingRow>
+        <SettingRow label={tx("高分屏清晰度", "High-DPI clarity")} help={tx("高分辨率屏幕可适当提高；选择自动即可适配大多数设备", "Auto fits most displays; increase on high-resolution screens")} value={`${effectiveDpr.toFixed(2)}×`}><SelectControl label={tx("高分屏清晰度", "High-DPI clarity")} value={draft.dprMode} volume={interfaceVolume} muted={interfaceMuted} onChange={(value) => patchGraphics("dprMode", value === "auto" ? "auto" : Number(value) as 1)}>{["auto", 1, 1.25, 1.5, 1.75, 2].map((value) => <option value={value} key={value}>{value === "auto" ? tx("自动", "Auto") : `${value}×`}</option>)}</SelectControl></SettingRow>
+        <SettingRow label={tx("抗锯齿", "Anti-aliasing")} help={tx("进入下一局时生效", "Applies next session")}><Toggle label={tx("抗锯齿", "Anti-aliasing")} checked={draft.antialiasEnabled} onChange={(value) => patchGraphics("antialiasEnabled", value)} /></SettingRow>
+        <div className="render-readout"><span>{tx("预计全屏分辨率", "Estimated fullscreen resolution")}</span><strong>{Math.round(fullscreenWidth * effectiveDpr)} × {Math.round(fullscreenHeight * effectiveDpr)}</strong></div>
+        <div className="settings-subsection-label"><span>{tx("训练界面", "Training HUD")}</span></div>
+      <SettingRow label={tx("HUD 缩放", "HUD scale")} value={`${Math.round(draft.hudScale * 100)}%`}><RangeControl label={tx("HUD 缩放", "HUD scale")} value={draft.hudScale} min={0.7} max={1.4} step={0.05} onChange={(value) => patch("hudScale", value)} /></SettingRow>
+      <SettingRow label={tx("HUD 透明度", "HUD opacity")} value={`${Math.round(draft.hudOpacity * 100)}%`}><RangeControl label={tx("HUD 透明度", "HUD opacity")} value={draft.hudOpacity} min={0.2} max={1} step={0.05} onChange={(value) => patch("hudOpacity", value)} /></SettingRow>
+      <SettingRow label={tx("性能信息", "Performance data")}><Toggle label={tx("显示性能信息", "Show performance data")} checked={draft.showFps} onChange={(value) => patch("showFps", value)} /></SettingRow>
     </SettingsSection>
   );
 
   const audioContent = (
-    <SettingsSection eyebrow="AUDIO" title="音频设置" description="调整训练中的整体音量，需要安静时可以一键静音。">
-      <SettingRow label="总音量" help="调整所有训练音效的音量" value={`${Math.round(draft.volume * 100)}%`}><RangeControl label="总音量" value={draft.volume} min={0} max={1} step={0.05} onChange={(value) => patch("volume", value)} /></SettingRow>
-      <SettingRow label="全部静音" help="关闭所有训练音效"><Toggle label="全部静音" checked={draft.muted} onChange={(value) => patch("muted", value)} /></SettingRow>
-    </SettingsSection>
+    <>
+      <SettingsSection title={tx("声音总控", "Master output")}>
+        <SettingRow label={tx("总音量", "Master volume")} value={`${Math.round(draft.volume * 100)}%`}><RangeControl label={tx("总音量", "Master volume")} value={draft.volume} min={0} max={1} step={0.05} onChange={(value) => patch("volume", value)} /></SettingRow>
+        <SettingRow label={tx("全部静音", "Mute all")}><Toggle label={tx("全部静音", "Mute all")} checked={draft.muted} onChange={(value) => patch("muted", value)} /></SettingRow>
+      </SettingsSection>
+      <SettingsSection title={tx("界面反馈", "Interface feedback")}>
+        <SettingRow label={tx("界面音量", "Interface volume")} value={`${Math.round(draft.interfaceVolume * 100)}%`}><RangeControl label={tx("界面音量", "Interface volume")} value={draft.interfaceVolume} min={0} max={1} step={0.05} onChange={(value) => patch("interfaceVolume", value)} /></SettingRow>
+        <SettingRow label={tx("关闭界面音效", "Mute interface sounds")}><Toggle label={tx("关闭界面音效", "Mute interface sounds")} checked={draft.interfaceMuted} onChange={(value) => patch("interfaceMuted", value)} /></SettingRow>
+      </SettingsSection>
+    </>
   );
 
-  const content = tab === "input" ? inputContent : tab === "crosshair" ? crosshairContent : tab === "display" ? displayContent : audioContent;
+  const content = tab === "general" ? generalContent : tab === "input" ? inputContent : tab === "crosshair" ? crosshairContent : tab === "display" ? displayContent : audioContent;
   const hasPreview = tab === "display";
 
   return (
     <main className="settings-workspace">
-      <header className="settings-titlebar">
-        <div><small>{context === "grid-shot" ? "GRID SHOT · PAUSED" : "PLAYER SETTINGS"}</small><h1>{context === "grid-shot" ? "系统设置" : "设置"}</h1><p>{context === "grid-shot" ? "调整鼠标、显示、准星和声音。训练规则请在开始前通过“训练设置”修改。" : "调整控制、显示、准星和声音，让训练更符合你的习惯。"}</p></div>
-        {onClose && <button type="button" className="settings-return" onClick={onClose}><ArrowLeft size={17} />返回暂停界面</button>}
-      </header>
+      {context === "grid-shot" && <header className="settings-titlebar">
+        <div><h1>{tx("系统设置", "System settings")}</h1></div>
+        {onClose && <button type="button" className="settings-return" onClick={onClose}><ArrowLeft size={17} />{tx("返回暂停界面", "Back to pause menu")}</button>}
+      </header>}
       <div className={`settings-shell ${hasPreview ? "has-preview" : "no-preview"}`}>
-        <nav className="settings-tabs" aria-label="设置分类">{tabs.map((item) => { const Icon = item.icon; return <button type="button" className={tab === item.id ? "active" : ""} onClick={() => setTab(item.id)} key={item.id}><Icon size={18} /><b>{item.label}</b></button>; })}</nav>
-        <section className="settings-content">{content}</section>
+        <nav className="settings-tabs" aria-label={tx("设置分类", "Settings categories")}>{tabs.map((item) => { const Icon = item.icon; return <button type="button" className={tab === item.id ? "active" : ""} onClick={() => { interfaceAudio.play("select", interfaceVolume, interfaceMuted); setTab(item.id); }} key={item.id}><Icon size={18} /><b>{tx(item.zh, item.en)}</b></button>; })}</nav>
+        <section className={`settings-content tab-${tab}`}>{content}</section>
         {hasPreview && <SettingsPreview tab={tab} settings={draft} />}
       </div>
-      <div className="settings-actions"><div><span className={changed ? "dirty" : ""} />{changed ? `已修改 ${changedKeys.length} 项` : "所有更改均已保存"}</div><button type="button" onClick={() => setDraft(settings)} disabled={!changed}><Undo2 size={16} />撤销修改</button><button type="button" onClick={resetCategory}><RotateCcw size={16} />恢复本类默认</button><button type="button" className="primary" disabled={!changed} onClick={apply}><Check size={17} />保存设置</button></div>
-      {confirm > 0 && <div className="graphics-confirm"><small>DISPLAY SAFETY</small><h3>保留新的画面设置？</h3><strong>{confirm}</strong><p>倒计时结束将恢复应用前的画面配置。</p><div><button type="button" className="primary" onClick={() => setConfirm(0)}>保留设置</button><button type="button" onClick={() => { onApply(rollbackRef.current); setDraft(rollbackRef.current); setConfirm(0); }}>恢复旧设置</button></div></div>}
+      <div className="settings-actions"><div><span className={changed ? "dirty" : ""} />{changed ? `${tx("已修改", "Changed")} ${changedKeys.length} ${tx("项", "items")}` : tx("所有更改均已保存", "All changes saved")}</div><button type="button" onClick={() => setDraft(settings)} disabled={!changed}><Undo2 size={16} />{tx("撤销修改", "Undo changes")}</button><button type="button" onClick={resetCategory}><RotateCcw size={16} />{tx("恢复本类默认", "Reset category")}</button><button type="button" className="primary" disabled={!changed} onClick={apply}><Check size={17} />{tx("保存设置", "Save settings")}</button></div>
+      {confirm > 0 && <div className="graphics-confirm"><h3>{tx("保留新的画面设置？", "Keep these display settings?")}</h3><strong>{confirm}</strong><p>{tx("倒计时结束将自动恢复。", "Settings will revert when the timer ends.")}</p><div><button type="button" className="primary" onClick={() => setConfirm(0)}>{tx("保留设置", "Keep settings")}</button><button type="button" onClick={() => { onApply(rollbackRef.current); setDraft(rollbackRef.current); setConfirm(0); }}>{tx("恢复旧设置", "Revert")}</button></div></div>}
     </main>
   );
 }

@@ -910,6 +910,9 @@ input[type="range"] {
     text-align: center;
     color: #9db4bf;
   }
+  html[lang="en-US"] .shell:before {
+    content: "The full training experience requires a desktop browser and mouse.";
+  }
   .shell > * {
     display: none;
   }
@@ -1664,6 +1667,62 @@ input[type="range"] {
   }
   .crosshair-editor-hero { grid-template-columns: 1fr; }
 }
+
+/* Compact roadmap: playable modes stay prominent; planned modes no longer mimic finished cards. */
+.catalog-page .catalog-grid {
+  grid-template-columns: minmax(320px, 430px);
+  margin-bottom: 14px;
+}
+.catalog-upcoming {
+  overflow: hidden;
+  border: 1px solid #203640;
+  background: #071119b8;
+}
+.catalog-upcoming > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  border-bottom: 1px solid #1d3039;
+  background: #0a171f;
+}
+.catalog-upcoming > header b { color: #b8cdd1; font-size: 12px; }
+.catalog-upcoming > header span { color: #6f838b; font-size: 10px; }
+.catalog-upcoming > div {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1px;
+  background: #1c3039;
+}
+.catalog-upcoming button {
+  position: relative;
+  display: grid;
+  min-height: 64px;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 10px;
+  align-items: center;
+  padding: 11px 13px;
+  border: 0;
+  border-left: 2px solid color-mix(in srgb, var(--accent), transparent 35%);
+  background: #08131a;
+  color: #71868e;
+  text-align: left;
+}
+.catalog-upcoming button:hover { z-index: 1; background: #0d2028; box-shadow: inset 0 0 0 1px #355762; }
+.catalog-upcoming button > span { display: flex; min-width: 0; flex-direction: column; }
+.catalog-upcoming button b { overflow: hidden; color: #d5e6e8; font: 700 13px Rajdhani, sans-serif; text-overflow: ellipsis; white-space: nowrap; }
+.catalog-upcoming button small { margin-top: 3px; color: #6d838c; font-size: 9px; }
+.catalog-upcoming button em { max-width: 140px; overflow: hidden; color: #80949b; font-size: 10px; font-style: normal; text-overflow: ellipsis; white-space: nowrap; }
+.catalog-upcoming button svg { color: #607780; }
+
+@media (max-width: 1100px) {
+  .catalog-upcoming > div { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 700px) {
+  .catalog-page .catalog-grid,
+  .catalog-upcoming > div { grid-template-columns: 1fr; }
+  .catalog-upcoming button em { display: none; }
+}
 .grid-training{background:radial-gradient(circle at 50% 42%,#102a38 0,#061019 42%,#020609 100%)}.ready-panel{background:radial-gradient(circle at 50% 0,#12303e,#071018 58%);border:0;border-top:1px solid #5cecff;border-bottom:1px solid #223a47}.ready-panel:before{content:'03 ACTIVE TARGETS';display:block;color:#66808d;font:600 10px Rajdhani;letter-spacing:3px}.ready-panel .ready-metrics{grid-template-columns:repeat(3,1fr);border:0;gap:1px;background:#1c3541}.ready-panel .ready-metrics span{background:#071019;border:0}.countdown-overlay{background:radial-gradient(circle,#2bd7ef18,transparent 35%)}.countdown-overlay strong{animation:count-beat .6s cubic-bezier(.2,.8,.2,1)}.finish-overlay{animation:session-finish 1.1s ease}.result-page{max-width:1560px!important}.result-stage{display:grid;grid-template-columns:260px 1fr;gap:30px;padding:42px;background:radial-gradient(circle at 15% 50%,#54318c38,transparent 32%),linear-gradient(120deg,#0b1721,#071018)}.result-rank{display:flex;flex-direction:column;align-items:center;border-right:1px solid #203846}.result-rank strong{font:700 104px Rajdhani;line-height:.9;color:#b087ff}.result-rank span,.result-score p{color:#eab562;font:600 11px Rajdhani;letter-spacing:2px}.result-score small,.result-rank small{color:#69808c;font:600 10px Rajdhani}.result-score h1{font:700 66px Rajdhani;margin:6px 0}.result-primary-metrics{grid-column:1/-1;display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:#263d49}.result-primary-metrics span{display:flex;align-items:center;gap:9px;padding:15px;background:#09131c;color:#71858f;font-size:10px}.result-primary-metrics b{margin-left:auto;color:#efffff;font:600 21px Rajdhani}.score-breakdown,.result-core,.phase-analysis,.coach-card{margin-top:17px;padding:26px;background:#08111a;border-top:1px solid #253d49}.score-breakdown>div{display:grid;grid-template-columns:repeat(5,1fr);gap:1px;background:#243844}.score-breakdown span{padding:16px;background:#071019;color:#70838f;font-size:11px;display:flex;flex-direction:column}.score-breakdown b{color:#dffaff;font:600 22px Rajdhani}.score-breakdown .total b{color:#ffc36d}.metric-ribbon{display:grid;grid-template-columns:repeat(6,1fr)}.metric-ribbon span{padding:14px;border-right:1px solid #1d303b;color:#70838f;font-size:10px}.metric-ribbon b{display:block;color:#e9fbff;font:600 18px Rajdhani}.result-charts{display:grid;grid-template-columns:1fr 1fr;gap:17px;margin-top:17px}.result-charts article{padding:24px;background:#08111a}.phase-analysis{display:grid;grid-template-columns:repeat(3,1fr);gap:1px}.phase-analysis h2{grid-column:1/-1}.phase-analysis article{padding:18px;background:#071019;display:grid;gap:8px}.phase-analysis span{display:flex;justify-content:space-between;color:#71848e;font-size:10px}.coach-card{display:flex;gap:18px;background:linear-gradient(110deg,#181026,#08111a 40%)}.coach-card svg{color:#b289ff}.result-page .result-actions button{display:flex;align-items:center;gap:8px}@keyframes count-beat{from{opacity:0;transform:scale(1.35)}70%{opacity:1;transform:scale(.96)}to{transform:scale(1)}}@keyframes session-finish{from{opacity:0}to{opacity:1}}@media(max-width:1100px){.metric-ribbon{grid-template-columns:repeat(3,1fr)}.score-breakdown>div{grid-template-columns:repeat(3,1fr)}.result-charts{grid-template-columns:1fr}}
 
 .result-grade-details{margin-top:17px;padding:18px 26px;background:#08111a;border-top:1px solid #2d4653}.result-grade-details>div{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:#263d49}.result-grade-details span{display:flex;justify-content:space-between;padding:12px 16px;background:#071019;color:#71858f;font-size:11px}.result-grade-details b{color:#e9fbff;font:700 18px Rajdhani}.result-grade-details p{margin:14px 0 0;color:#9badb6}.legacy-stats-warning{grid-column:1/-1;color:#c49d69}.stats-debug-panel{margin-top:17px;padding:18px;background:#061019;border:1px solid #344b58;color:#8ea3ae}.stats-debug-panel.pass{border-color:#2c725e}.stats-debug-panel.failed{border-color:#934d52}.stats-debug-panel summary{cursor:pointer;font:700 14px Rajdhani;letter-spacing:1.5px;color:#efb2b5}.stats-debug-panel.pass summary{color:#62daa8}.stats-debug-panel>div{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:14px}.stats-debug-panel code{display:flex;justify-content:space-between;padding:9px;background:#091720;color:#78909c}.stats-debug-panel b{color:#dffaff}.stats-debug-panel li{color:#ef9ba1}
@@ -1916,7 +1975,7 @@ input[type="range"] {
 .difficulty-filter > b { margin-left: auto; color: #8ca2ab; font: 700 10px Rajdhani, sans-serif; letter-spacing: .7px; }
 
 .training-difficulty-section { margin: 0 0 38px; }
-.difficulty-section-header { display: grid; grid-template-columns: 46px auto minmax(240px, 1fr) auto; gap: 14px; align-items: center; margin-bottom: 13px; padding: 0 3px 12px; border-bottom: 1px solid #203640; }
+.difficulty-section-header { display: grid; grid-template-columns: 46px 1fr auto; gap: 14px; align-items: center; margin-bottom: 13px; padding: 0 3px 12px; border-bottom: 1px solid #203640; }
 .difficulty-index { display: grid; width: 40px; height: 40px; place-items: center; border: 1px solid color-mix(in srgb, var(--difficulty-color), transparent 45%); background: color-mix(in srgb, var(--difficulty-color), transparent 91%); color: var(--difficulty-color); font: 700 19px Rajdhani, sans-serif; }
 .difficulty-section-header div { min-width: 140px; }
 .difficulty-section-header small { color: var(--difficulty-color); font: 700 8px Rajdhani, sans-serif; letter-spacing: 2px; }
@@ -2499,7 +2558,7 @@ input[type="range"] {
 }
 
 @media (min-width: 1500px) {
-  .catalog-page .catalog-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .catalog-page .catalog-grid { grid-template-columns: repeat(auto-fit, minmax(340px, 430px)); }
 }
 @media (max-width: 1050px) {
   .game-filter-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }

@@ -1,23 +1,25 @@
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { Grid, Sparkles } from "@react-three/drei";
-import { AnimatePresence, motion } from "framer-motion";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import {
   Activity,
+  ArrowLeft,
   Award,
   Bot,
   CalendarDays,
   Check,
+  ChevronDown,
   ChevronRight,
-  Cloud,
   Crosshair,
   Gamepad2,
   Gauge,
-  Home,
-  LockKeyhole,
   Eye,
+  LogIn,
+  LogOut,
   Settings,
   Target,
   Timer,
+  UserRound,
   Volume2,
   X,
   Zap,
@@ -45,7 +47,7 @@ import {
   normalizeNeonInputSettings,
 } from "./game/sensitivity/sensitivity";
 import { BrowserFrameMonitor } from "./game/performance/PerformanceMonitor";
-import { usePerformanceStore } from "./game/performance/performanceStore";
+import { interfaceAudio } from "./game/audio/interfaceAudio";
 import { sanitizeTrainingSettings } from "./game/settings/trainingSettings";
 import { CROSSHAIR_PRESETS, matchCrosshairPreset } from "./game/settings/crosshairPresets";
 import {
@@ -56,24 +58,29 @@ import { SettingsWorkspace } from "./pages/SettingsWorkspace";
 import { GridShotResultPage } from "./pages/GridShotResultPage";
 import { GridShotSettingsPreview } from "./components/training/GridShotSettingsPreview";
 import { GameIcon } from "./components/GameIcon";
+import { ConfirmationDialog, PlayerAvatar, ProfileWorkspace } from "./features/auth/ProfileWorkspace";
+import { useAuthStore } from "./features/auth/authStore";
+import { setAppLanguage, tx } from "./i18n";
 import {
   filterTrainingCatalog,
+  getLocalizedTrainingCopy,
+  getTrainingCategoryLabel,
+  getTrainingDifficultyLabel,
   getTrainingGameFitReason,
   groupTrainingCatalogByDifficulty,
   rankTrainingCatalogForGame,
   trainingCatalogEntries,
-  trainingCategories,
   trainingDifficulties,
   trainingGameLabels,
-  trainingGameProfiles,
   trainingGames,
   type TrainingCatalogEntry,
   type TrainingDifficultyId,
 } from "./game/trainingCatalog";
 import "./App.css";
+import "./gameShell.css";
 
 type ModeId = "grid" | "reflex" | "tracking";
-type Page = "boot" | "home" | "modes" | "game" | "results" | "settings" | "qa";
+type Page = "boot" | "home" | "modes" | "game" | "results" | "progress" | "tools" | "ranking" | "profile" | "settings" | "qa";
 type SettingsData = TrainingSettings;
 type Result = {
   mode: ModeId;
@@ -128,6 +135,14 @@ const pathPage = (): Page =>
       ? "modes"
     : location.pathname.startsWith("/results/grid-shot")
       ? "results"
+      : location.pathname.startsWith("/progress")
+        ? "progress"
+        : location.pathname.startsWith("/tools")
+          ? "tools"
+          : location.pathname.startsWith("/ranking") || location.pathname.startsWith("/compete")
+            ? "ranking"
+          : location.pathname.startsWith("/profile")
+            ? "profile"
       : location.pathname.startsWith("/settings")
         ? "settings"
         : "boot";
@@ -137,17 +152,30 @@ const pagePath: Record<Page, string> = {
   modes: "/training",
   game: "/training/grid-shot",
   results: "/results/grid-shot",
+  progress: "/progress",
+  tools: "/tools",
+  ranking: "/ranking",
+  profile: "/profile",
   settings: "/settings",
   qa: "/dev/grid-shot-qa",
 };
-const useApp = create<AppState>((set) => ({
+const useApp = create<AppState>((set, get) => ({
   page: pathPage(),
   mode: "grid",
   settings: normalizedLoadedSettings,
   gridShotSettings: loadedGridShotSettings,
   results: load("neon-results", []),
   setPage: (page) => {
-    history.pushState({}, "", pagePath[page]);
+    const current = get();
+    if (current.page === page) return;
+    if (current.page !== "boot") {
+      interfaceAudio.play(
+        "navigate",
+        current.settings.volume * current.settings.interfaceVolume,
+        current.settings.muted || current.settings.interfaceMuted,
+      );
+    }
+    if (location.pathname !== pagePath[page]) history.pushState({}, "", pagePath[page]);
     set({ page });
     window.scrollTo({ top: 0, left: 0, behavior: "instant" });
   },
@@ -174,6 +202,28 @@ const useApp = create<AppState>((set) => ({
   setGridResult: (gridResult, previousGridResult) =>
     set({ gridResult, previousGridResult }),
 }));
+
+function useInterfaceAudioFeedback(enabled: boolean) {
+  useEffect(() => {
+    if (!enabled) return;
+    const playForControl = (event: MouseEvent) => {
+      const target = event.target instanceof Element ? event.target : null;
+      const control = target?.closest<HTMLElement>(
+        'button, a[href], select, [role="button"], [role="menuitem"], [role="option"], input[type="checkbox"], input[type="radio"]',
+      );
+      if (!control || control.matches(":disabled") || control.getAttribute("aria-disabled") === "true") return;
+      if (control.closest('[data-interface-audio="off"]')) return;
+      const { settings } = useApp.getState();
+      interfaceAudio.playFallback(
+        "select",
+        settings.volume * settings.interfaceVolume,
+        settings.muted || settings.interfaceMuted,
+      );
+    };
+    document.addEventListener("click", playForControl, true);
+    return () => document.removeEventListener("click", playForControl, true);
+  }, [enabled]);
+}
 
 function AudioEngine() {
   const ctx = useRef<AudioContext | null>(null);
@@ -219,21 +269,21 @@ function Boot() {
         <BrandGlyph />
         <b>NEON</b> AIM
       </div>
-      <p>PRECISION TRAINING SYSTEM</p>
+      <p>{tx("专注每一次命中", "Make every hit intentional")}</p>
       <div className="boot-status">
         <span>
           {n < 35
-            ? "校准训练环境"
+            ? tx("校准训练环境", "Calibrating training environment")
             : n < 70
-              ? "加载目标系统"
-              : "同步本地训练数据"}
+              ? tx("加载目标系统", "Loading target system")
+              : tx("同步本地训练数据", "Syncing local training data")}
         </span>
         <em>{n}%</em>
       </div>
       <div className="progress">
         <i style={{ width: `${n}%` }} />
       </div>
-      <button onClick={() => setPage("home")}>跳过初始化</button>
+      <button onClick={() => setPage("home")}>{tx("立即进入", "Enter now")}</button>
     </div>
   );
 }
@@ -248,108 +298,211 @@ function BrandGlyph() {
   );
 }
 
-function Nav() {
-  const page = useApp((s) => s.page),
-    setPage = useApp((s) => s.setPage);
+type PlayerProgress = { level: number; currentXp: number; requiredXp: number };
+
+function readPlayerProgress(): PlayerProgress {
+  const stored = load<Partial<PlayerProgress>>("neon-player-progress", {});
+  const level = Math.max(1, Math.floor(Number(stored.level) || 1));
+  const requiredXp = Math.max(1, Math.floor(Number(stored.requiredXp) || 1000));
+  const currentXp = Math.min(requiredXp, Math.max(0, Math.floor(Number(stored.currentXp) || 0)));
+  return { level, currentXp, requiredXp };
+}
+
+const primaryNavigation: Array<{ zh: string; en: string; page: Page; anchor?: boolean }> = [
+  { zh: "训练", en: "Training", page: "modes" },
+  { zh: "生涯", en: "Career", page: "progress" },
+  { zh: "大厅", en: "Lobby", page: "home", anchor: true },
+  { zh: "工具", en: "Tools", page: "tools" },
+  { zh: "排行", en: "Ranks", page: "ranking" },
+];
+
+function TopNavigation() {
+  const page = useApp((state) => state.page);
+  const settings = useApp((state) => state.settings);
+  const setPage = useApp((state) => state.setPage);
+  const authStatus = useAuthStore((state) => state.status);
+  const authUser = useAuthStore((state) => state.user);
+  const authBusy = useAuthStore((state) => state.busyAction);
+  const logout = useAuthStore((state) => state.logout);
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
+  const profileRef = useRef<HTMLDivElement>(null);
+  const progress = readPlayerProgress();
+  const progressPercent = Math.round((progress.currentXp / progress.requiredXp) * 100);
+  const playerName = authUser?.displayName ?? (authStatus === "loading" ? tx("正在连接", "Connecting") : tx("未登录", "Guest"));
+  const membership = authUser?.role.toUpperCase().includes("VIP") ? tx("VIP 会员", "VIP Member") : null;
+
+  useEffect(() => {
+    if (!profileOpen) return;
+    const close = (event: MouseEvent) => {
+      if (!profileRef.current?.contains(event.target as Node)) setProfileOpen(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setProfileOpen(false);
+    };
+    window.addEventListener("mousedown", close);
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      window.removeEventListener("mousedown", close);
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [profileOpen]);
+
+  const navigate = (destination: Page) => {
+    setProfileOpen(false);
+    setPage(destination);
+  };
+  const toggleProfile = () => {
+    interfaceAudio.play(
+      profileOpen ? "close" : "open",
+      settings.volume * settings.interfaceVolume,
+      settings.muted || settings.interfaceMuted,
+    );
+    setProfileOpen((current) => !current);
+  };
+  const confirmLogout = async () => {
+    await logout();
+    setLogoutConfirmOpen(false);
+  };
+
   return (
-    <aside>
-      <div className="logo">
-        <BrandGlyph />
-        <span>
-          NEON <b>AIM</b>
-        </span>
-      </div>
-      <nav>
-        {[
-          ["home", Home, "首页"],
-          ["modes", Target, "训练"],
-          ["settings", Settings, "设置"],
-        ].map(([id, Icon, label]) => (
-          <button
-            key={id as string}
-            className={page === id ? "active" : ""}
-            onClick={() => setPage(id as Page)}
-          >
-            <Icon size={18} />
-            <span>{label as string}</span>
+    <>
+      <header className="app-topbar">
+        <button className="topbar-brand" onClick={() => navigate("home")} aria-label={tx("返回大厅", "Return to lobby")}>
+          <BrandGlyph />
+          <span>NEON <b>AIM</b></span>
+        </button>
+
+        <nav className="topbar-navigation" aria-label={tx("主导航", "Primary navigation")}>
+          {primaryNavigation.map((item) => {
+            const active = page === item.page;
+            return (
+              <motion.button
+                type="button"
+                key={item.page}
+                className={["topbar-nav-item", item.anchor ? "anchor" : "", active ? "active" : ""].filter(Boolean).join(" ")}
+                onClick={() => navigate(item.page)}
+                aria-current={active ? "page" : undefined}
+                whileTap={{ scale: .96 }}
+              >
+                <span>{tx(item.zh, item.en)}</span>
+                {active && <motion.i className="topbar-active-signal" layoutId="topbar-active-signal" transition={{ type: "spring", stiffness: 430, damping: 34 }} />}
+              </motion.button>
+            );
+          })}
+        </nav>
+
+        <div className="topbar-player-zone">
+          <div className="topbar-player-menu" ref={profileRef}>
+          <button type="button" className="topbar-player-trigger" onClick={toggleProfile} aria-expanded={profileOpen} aria-haspopup="menu">
+            {authUser
+              ? <PlayerAvatar displayName={authUser.displayName} preset={authUser.avatarPreset} size="choice" />
+              : <span className="topbar-avatar-fallback"><Crosshair size={17} /></span>}
+            <span className="topbar-player-name">{playerName}</span>
+            <ChevronDown className={profileOpen ? "open" : ""} size={15} />
+            <span className="topbar-xp-track" aria-label={`${progress.currentXp} / ${progress.requiredXp} ${tx("经验", "XP")}`}><i style={{ width: `${progressPercent}%` }} /></span>
           </button>
-        ))}
-      </nav>
-    </aside>
+          <AnimatePresence>
+            {profileOpen && (
+              <motion.div
+                className="topbar-profile-popover"
+                role="menu"
+                initial={{ opacity: 0, y: -5 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -3 }}
+                transition={{ duration: .16, ease: [0.22, 0.72, 0.24, 1] }}
+              >
+                <header>
+                  <div className="profile-popover-identity">
+                    {authUser
+                      ? <PlayerAvatar displayName={authUser.displayName} preset={authUser.avatarPreset} size="choice" />
+                      : <span className="profile-popover-avatar"><Crosshair size={17} /></span>}
+                    <span>{membership && <small>{membership}</small>}<strong>{playerName}</strong></span>
+                  </div>
+                  <div className="profile-popover-progress">
+                    <p>
+                      <span className="profile-level-value">LV.<b>{progress.level}</b></span>
+                      <span className="profile-xp-value"><b>{progress.currentXp}</b><i>/</i><span>{progress.requiredXp} XP</span></span>
+                    </p>
+                    <span><i style={{ width: `${progressPercent}%` }} /></span>
+                  </div>
+                </header>
+                <button type="button" role="menuitem" onClick={() => navigate("profile")}>
+                  {authStatus === "authenticated" ? <UserRound size={16} /> : <LogIn size={16} />}
+                  {authStatus === "authenticated" ? tx("个人中心", "Account center") : tx("登录 / 注册", "Sign in / Register")}
+                  <ChevronRight size={15} />
+                </button>
+                {authStatus === "authenticated" && <button type="button" role="menuitem" className="danger" onClick={() => { setProfileOpen(false); setLogoutConfirmOpen(true); }}><LogOut size={16} />{tx("退出登录", "Sign out")}</button>}
+              </motion.div>
+            )}
+          </AnimatePresence>
+          </div>
+          <button type="button" className="topbar-settings" onClick={() => navigate("settings")} aria-label={tx("打开设置", "Open settings")} aria-current={page === "settings" ? "page" : undefined}><Settings size={18} /></button>
+        </div>
+      </header>
+      <AnimatePresence>
+        {logoutConfirmOpen && <ConfirmationDialog icon={LogOut} title={tx("退出登录？", "Sign out?")} description={tx("确认退出当前账户？本机保存的训练设置不会受到影响。", "Sign out of the current account? Local training settings will be kept.")} confirmLabel={tx("确认退出", "Sign out")} onCancel={() => setLogoutConfirmOpen(false)} onConfirm={() => { void confirmLogout(); }} busy={authBusy === "logout"} />}
+      </AnimatePresence>
+    </>
   );
 }
 
 function HomePage() {
   const setPage = useApp((s) => s.setPage);
+  const settings = useApp((s) => s.settings);
+  const gridShotSettings = useApp((s) => s.gridShotSettings);
+  const latest = useMemo(() => readHistory()[0] ?? null, []);
   return (
-    <PageWrap title="首页" sub="TRAINING OVERVIEW">
-      <section className="hero">
-        <div>
-          <span className="eyebrow">GRID SHOT · READY</span>
-          <h1>
-            把每一枪，
-            <br />
-            <b>练得更稳。</b>
-          </h1>
-          <p>从看清目标、停稳准星开始，在 60 秒里找到准确与速度的平衡。</p>
-          <button className="primary" onClick={() => setPage("game")}>
-            <Crosshair size={19} />
-            开始训练
-            <ChevronRight size={18} />
-          </button>
+    <PageWrap title={tx("训练中枢", "Training lobby")} className="lobby-page">
+      <motion.section
+        className="lobby-mission"
+        initial={{ opacity: 0, scale: .99 }}
+        animate={{ opacity: 1, scale: 1 }}
+        transition={{ duration: .35 }}
+      >
+        <div className="mission-preview" aria-hidden="true">
+          <GridShotSettingsPreview settings={settings} modeSettings={gridShotSettings} />
+          <div className="mission-preview-shade" />
         </div>
-        <div className="orb">
-          <div />
-          <span>
-            READY<small>校准完成</small>
-          </span>
+        <div className="mission-copy">
+          <span className="mission-mode"><Crosshair size={15} />{tx("精准点击", "Precision clicking")}</span>
+          <h1>GRID <b>SHOT</b></h1>
+          <div className="mission-metrics">
+            <span><small>{tx("时长", "Duration")}</small><b>60 {tx("秒", "sec")}</b></span>
+            <span><small>{tx("目标", "Targets")}</small><b>3</b></span>
+            <span><small>{tx("训练重点", "Focus")}</small><b>{tx("落点 · 节奏", "Placement · Rhythm")}</b></span>
+          </div>
+          <div className="mission-actions">
+            <button className="primary" onClick={() => setPage("game")}>
+              <Crosshair size={18} />{tx("开始训练", "Start training")}<ChevronRight size={17} />
+            </button>
+            <button onClick={() => setPage("modes")}>{tx("更换训练", "Change drill")}</button>
+          </div>
+          {latest && (
+            <div className="last-run" aria-label={tx("上次训练成绩", "Previous training result")}>
+              <span>{tx("上次", "LAST")}</span>
+              <b>{latest.score.toLocaleString()}</b>
+              <em>{latest.accuracy.toFixed(1)}%</em>
+              <em>{Math.round(latest.targetsPerMinute)} TPM</em>
+            </div>
+          )}
         </div>
-      </section>
-      <section className="cloud-data-notice">
-        <div><Cloud size={22} /><span><small>TRAINING PROFILE</small><h3>训练档案即将开放</h3></span></div>
-        <p>账号系统上线后，这里将统一展示个人最佳、成绩趋势和训练建议。当前首页不建立临时统计档案。</p>
-        <b>功能仍在准备中</b>
-      </section>
-      <section className="roadmap-section">
-        <div className="roadmap-heading"><div><small>NEXT MODULES</small><h3>未来功能</h3></div><span>功能仍在准备中</span></div>
-        <div className="roadmap-grid">
-          <FutureFeature icon={Bot} title="AI 教练" description="根据单局表现生成训练建议与复盘重点。" />
-          <FutureFeature icon={CalendarDays} title="训练计划" description="根据目标和可用时间安排每日训练内容。" />
-          <FutureFeature icon={Award} title="成就系统" description="记录里程碑、挑战进度和长期成长。" />
-          <FutureFeature icon={Cloud} title="云端档案" description="跨设备同步设置、成绩和训练记录。" />
-        </div>
-      </section>
+        <div className="mission-edge" aria-hidden="true"><i /><span>01</span><i /></div>
+      </motion.section>
     </PageWrap>
   );
 }
 function PageWrap({
   title,
-  sub,
   children,
   className,
 }: {
   title: string;
-  sub: string;
   children: React.ReactNode;
   className?: string;
 }) {
-  const metrics = usePerformanceStore((s) => s.metrics);
   return (
-    <main className={className}>
-      <header>
-        <div>
-          <small>{sub}</small>
-          <h2>{title}</h2>
-        </div>
-        <div className="status">
-          <i /> 本地就绪{" "}
-          <span>
-            {metrics.average1s > 0
-              ? `${Math.round(metrics.average1s)} FPS · ${metrics.frameTime.toFixed(1)} ms`
-              : "性能检测中"}
-          </span>
-        </div>
-      </header>
+    <main className={["workspace-main", className].filter(Boolean).join(" ")} aria-label={title}>
       {children}
     </main>
   );
@@ -395,15 +548,67 @@ function Panel({
     </section>
   );
 }
-function FutureFeature({ icon: Icon, title, description }: { icon: typeof Zap; title: string; description: string }) {
+type FutureHubKind = "progress" | "tools" | "ranking";
+
+const futureHubContent: Record<FutureHubKind, {
+  title: [string, string];
+  description: [string, string];
+  icon: typeof Zap;
+  modules: Array<{ icon: typeof Zap; title: [string, string] }>;
+}> = {
+  progress: {
+    title: ["生涯", "Career"],
+    description: ["训练记录、趋势和计划会在这里汇合。", "Training history, trends, and plans will come together here."],
+    icon: Activity,
+    modules: [
+      { icon: Activity, title: ["训练记录", "Training history"] },
+      { icon: Bot, title: ["训练复盘", "Training review"] },
+      { icon: CalendarDays, title: ["训练计划", "Training plan"] },
+    ],
+  },
+  tools: {
+    title: ["工具", "Tools"],
+    description: ["灵敏度、准星与训练环境校准会在这里集中管理。", "Sensitivity, crosshair, and training calibration will be managed here."],
+    icon: Gauge,
+    modules: [
+      { icon: Target, title: ["灵敏度换算", "Sensitivity converter"] },
+      { icon: Crosshair, title: ["准星工具", "Crosshair tools"] },
+      { icon: Gauge, title: ["输入与性能", "Input and performance"] },
+    ],
+  },
+  ranking: {
+    title: ["排行", "Ranks"],
+    description: ["按训练地图、球体大小和时长比较完全相同配置下的成绩。", "Compare scores from identical map, target-size, and duration settings."],
+    icon: Award,
+    modules: [
+      { icon: Award, title: ["单项排行", "Drill ranks"] },
+      { icon: Target, title: ["地图评级", "Map rating"] },
+      { icon: Activity, title: ["我的成绩", "My scores"] },
+    ],
+  },
+};
+
+function FutureHubPage({ kind }: { kind: FutureHubKind }) {
+  const content = futureHubContent[kind];
+  const Icon = content.icon;
   return (
-    <motion.article className="future-feature" whileHover={{ y: -4 }}>
-      <span><Icon size={19} /></span>
-      <small>功能仍在准备中</small>
-      <h4>{title}</h4>
-      <p>{description}</p>
-    </motion.article>
+    <PageWrap title={tx(...content.title)} className="future-hub-page">
+      <section className="future-hub-hero">
+        <div className="future-hub-symbol"><Icon size={34} /></div>
+        <div><p>{tx(...content.description)}</p></div>
+        <span className="future-status">{tx("待开发", "Coming soon")}</span>
+        <div className="future-module-line">
+          {content.modules.map(({ icon: ModuleIcon, title }) => (
+            <span key={title[1]}><ModuleIcon size={16} /><b>{tx(...title)}</b><small>{tx("待开发", "Coming soon")}</small></span>
+          ))}
+        </div>
+      </section>
+    </PageWrap>
   );
+}
+
+function ProfilePage() {
+  return <PageWrap title={tx("个人档案", "Player profile")} className="profile-page"><ProfileWorkspace /></PageWrap>;
 }
 
 function ModesPage() {
@@ -424,11 +629,11 @@ function ModesPage() {
     () => groupTrainingCatalogByDifficulty(filteredEntries),
     [filteredEntries],
   );
-  const selectedGameLabel = selectedGame === "all" ? "全部游戏" : trainingGameLabels[selectedGame];
-  const selectedGameProfile = selectedGame === "all" ? null : trainingGameProfiles[selectedGame];
+  const selectedGameLabel = selectedGame === "all" ? tx("全部游戏", "All games") : trainingGameLabels[selectedGame];
   const selectedTraining = selectedTrainingId
     ? trainingCatalogEntries.find((entry) => entry.id === selectedTrainingId) ?? null
     : null;
+  const selectedTrainingCopy = selectedTraining ? getLocalizedTrainingCopy(selectedTraining) : null;
 
   useEffect(() => {
     if (!selectedTraining) return;
@@ -440,42 +645,34 @@ function ModesPage() {
   }, [selectedTraining]);
 
   return (
-    <PageWrap title="训练" sub="TRAINING CATALOG" className="catalog-page">
-      <div className="catalog-status-strip">
-        <p>选择常玩的游戏，查看更贴近其击杀节奏、目标运动和交战距离的训练建议。</p>
-        <span><b>{trainingCatalogEntries.length}</b> 项训练</span>
-        <span><b>{trainingGames.length}</b> 套游戏推荐</span>
-      </div>
-
-      <section className="catalog-filter-panel" aria-label="训练筛选">
+    <PageWrap title={tx("训练库", "Training library")} className="catalog-page">
+      <section className="catalog-filter-panel" aria-label={tx("训练筛选", "Training filters")}>
         <div className="catalog-filter-heading">
-          <div><Gamepad2 size={18} /><span><small>GAME RECOMMENDATION</small><b>你主要玩哪款游戏？</b></span></div>
-          <p>{selectedGameProfile ? `${selectedGameProfile.ttkLabel}：建议优先训练${selectedGameProfile.focus}。同一难度内已按相关度排序。` : "选择一款游戏查看专项建议；推荐依据包括击杀时间、目标运动、交战距离和武器操作。"}</p>
+          <div><Gamepad2 size={18} /><span><b>{tx("选择游戏", "Select game")}</b></span></div>
         </div>
         <div className="game-filter-layout">
-          <button className={`catalog-all-game ${selectedGame === "all" ? "active" : ""}`} aria-pressed={selectedGame === "all"} onClick={() => setSelectedGame("all")}>
-            <GameIcon gameId="all" /><span>全部训练<small>{trainingCatalogEntries.length} 项</small></span>{selectedGame === "all" && <Check size={14} />}
-          </button>
           <div className="game-filter-grid">
+            <button className={`catalog-all-game ${selectedGame === "all" ? "active" : ""}`} aria-pressed={selectedGame === "all"} onClick={() => setSelectedGame("all")}>
+              <GameIcon gameId="all" /><span>{tx("全部", "All")}</span>{selectedGame === "all" && <Check size={14} />}
+            </button>
             {trainingGames.map((game) => {
-              const count = trainingCatalogEntries.filter((entry) => entry.games.includes(game.id)).length;
               return (
                 <button key={game.id} className={selectedGame === game.id ? "active" : ""} aria-pressed={selectedGame === game.id} onClick={() => setSelectedGame(game.id)}>
-                  <GameIcon gameId={game.id} /><span>{game.label}<small>{count} 项推荐</small></span>{selectedGame === game.id && <Check size={14} />}
+                  <GameIcon gameId={game.id} /><span>{game.label}</span>{selectedGame === game.id && <Check size={14} />}
                 </button>
               );
             })}
           </div>
         </div>
         <div className="difficulty-filter">
-          <span>训练阶段</span>
-          <button className={selectedDifficulty === "all" ? "active" : ""} aria-pressed={selectedDifficulty === "all"} onClick={() => setSelectedDifficulty("all")}>全部</button>
+          <span>{tx("训练阶段", "Training tier")}</span>
+          <button className={selectedDifficulty === "all" ? "active" : ""} aria-pressed={selectedDifficulty === "all"} onClick={() => setSelectedDifficulty("all")}>{tx("全部", "All")}</button>
           {trainingDifficulties.map((difficulty) => (
             <button key={difficulty.id} className={selectedDifficulty === difficulty.id ? "active" : ""} aria-pressed={selectedDifficulty === difficulty.id} onClick={() => setSelectedDifficulty(difficulty.id)}>
-              <i style={{ background: difficulty.color }} />{difficulty.label}
+              <i style={{ background: difficulty.color }} />{getTrainingDifficultyLabel(difficulty.id)}
             </button>
           ))}
-          <b>{selectedGameLabel} · 找到 {filteredEntries.length} 项</b>
+          <b>{selectedGameLabel} · {tx("找到", "Found")} {filteredEntries.length} {tx("项", "drills")}</b>
         </div>
       </section>
 
@@ -488,71 +685,91 @@ function ModesPage() {
           exit={{ opacity: 0, y: -5 }}
           transition={{ duration: .2 }}
         >
-          {difficultyGroups.map((group) => (
+          {difficultyGroups.map((group) => {
+            const availableEntries = group.entries.filter((entry) => entry.available);
+            const upcomingEntries = group.entries.filter((entry) => !entry.available);
+            return (
             <section className="training-difficulty-section" key={group.id}>
               <header className="difficulty-section-header" style={{ "--difficulty-color": group.color } as React.CSSProperties}>
                 <span className="difficulty-index">{group.code}</span>
-                <div><small>{group.eyebrow}</small><h2>{group.label}训练</h2></div>
-                <p>{group.description}</p>
-                <b>{group.entries.length} 项</b>
+                <div><h2>{getTrainingDifficultyLabel(group.id)} {tx("训练", "Drills")}</h2></div>
+                <b>{group.entries.length} {tx("项", "drills")}</b>
               </header>
-              <div className="catalog-grid">
-                {group.entries.map((m) => {
+              {availableEntries.length > 0 && <div className="catalog-grid">
+                {availableEntries.map((m) => {
+                  const copy = getLocalizedTrainingCopy(m);
                   return (
                     <article className={`catalog-card ${m.available ? "available" : "coming-soon"}`} key={m.id} style={{ "--accent": m.color } as React.CSSProperties}>
                       <CatalogScenePreview training={m} settings={settings} />
-                      <div className="catalog-card-labels">
-                        <span>{m.code} · {trainingCategories[m.category].label}</span>
-                        <b>{m.available ? <><i /> 已开放</> : <><LockKeyhole size={11} /> 待开发</>}</b>
-                      </div>
-                      <h3>{m.name}</h3>
-                      <p>{m.description}</p>
-                      <div className="catalog-specs">
-                        <span><small>时长</small><b>{m.durationSec} 秒</b></span>
-                        <span><small>操作</small><b>{m.inputStyle}</b></span>
-                        <span><small>主要指标</small><b>{m.primaryMetric}</b></span>
-                      </div>
-                      <div className="catalog-basis"><small>训练重点</small><b>{m.trainingBasis}</b></div>
-                      <div className="mode-games">
-                        {m.games.map((game) => <span className={game === selectedGame ? "matched" : ""} key={game}>{trainingGameLabels[game]}</span>)}
-                      </div>
-                      <div className="catalog-card-actions">
-                        <button onClick={() => setSelectedTrainingId(m.id)}><Eye size={14} />查看详情</button>
-                        {m.available && <button className="primary-card-action" onClick={() => {
-                          if (!m.playableMode) return;
-                          setMode(m.playableMode);
-                          setPage("game");
-                        }}>开始训练 <ChevronRight size={15} /></button>}
+                      <div className="catalog-card-copy">
+                        <div className="catalog-card-labels">
+                          <span>{getTrainingCategoryLabel(m.category)}</span>
+                          <b><i /> {tx("可训练", "Playable")}</b>
+                        </div>
+                        <h3>{m.name}</h3>
+                        <p>{copy.description}</p>
+                        <div className="catalog-specs">
+                          <span><small>{tx("时长", "Duration")}</small><b>{m.durationSec} {tx("秒", "sec")}</b></span>
+                          <span><small>{tx("操作", "Input")}</small><b>{copy.inputStyle}</b></span>
+                          <span><small>{tx("主要指标", "Primary metric")}</small><b>{copy.primaryMetric}</b></span>
+                        </div>
+                        <div className="catalog-basis"><small>{tx("训练重点", "Training focus")}</small><b>{copy.trainingBasis}</b></div>
+                        <div className="mode-games">
+                          {m.games.map((game) => <span className={game === selectedGame ? "matched" : ""} key={game}>{trainingGameLabels[game]}</span>)}
+                        </div>
+                        <div className="catalog-card-actions">
+                          <button onClick={() => setSelectedTrainingId(m.id)}><Eye size={14} />{tx("查看详情", "View details")}</button>
+                          {m.available && <button className="primary-card-action" onClick={() => {
+                            if (!m.playableMode) return;
+                            setMode(m.playableMode);
+                            setPage("game");
+                          }}>{tx("开始训练", "Start training")} <ChevronRight size={15} /></button>}
+                        </div>
                       </div>
                     </article>
                   );
                 })}
-              </div>
+              </div>}
+              {upcomingEntries.length > 0 && (
+                <details className="catalog-upcoming">
+                  <summary><b>{tx("待开发", "Coming soon")}</b><span>{upcomingEntries.length} {tx("项", "drills")}</span><ChevronRight size={15} /></summary>
+                  <div>
+                    {upcomingEntries.map((training) => (
+                      <button type="button" key={training.id} style={{ "--accent": training.color } as React.CSSProperties} onClick={() => setSelectedTrainingId(training.id)}>
+                        <span><b>{training.name}</b><small>{getTrainingCategoryLabel(training.category)} · {tx("待开发", "Coming soon")}</small></span>
+                        <em>{getLocalizedTrainingCopy(training).trainingBasis}</em>
+                        <ChevronRight size={15} />
+                      </button>
+                    ))}
+                  </div>
+                </details>
+              )}
             </section>
-          ))}
+            );
+          })}
         </motion.div>
       </AnimatePresence>
       <AnimatePresence>
-        {selectedTraining && (
+        {selectedTraining && selectedTrainingCopy && (
           <motion.div className="training-detail-backdrop" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onMouseDown={(event) => {
             if (event.target === event.currentTarget) setSelectedTrainingId(null);
           }}>
-            <motion.aside className="training-detail-drawer" role="dialog" aria-modal="true" aria-label={`${selectedTraining.name} 训练详情`} initial={{ x: 60, opacity: 0 }} animate={{ x: 0, opacity: 1 }} exit={{ x: 60, opacity: 0 }} transition={{ duration: .22 }}>
+            <motion.aside className="training-detail-drawer" role="dialog" aria-modal="true" aria-label={`${selectedTraining.name} ${tx("训练详情", "training details")}`} initial={{ x: 60, opacity: 0 }} animate={{ x: 0, opacity: 1 }} exit={{ x: 60, opacity: 0 }} transition={{ duration: .22 }}>
               <header>
-                <div><small>{selectedTraining.code} · {trainingCategories[selectedTraining.category].eyebrow}</small><h2>{selectedTraining.name}</h2></div>
-                <button aria-label="关闭训练详情" onClick={() => setSelectedTrainingId(null)}><X size={18} /></button>
+                <div><h2>{selectedTraining.name}</h2></div>
+                <button aria-label={tx("关闭训练详情", "Close training details")} onClick={() => setSelectedTrainingId(null)}><X size={18} /></button>
               </header>
               <CatalogScenePreview training={selectedTraining} settings={settings} large />
               <div className="training-detail-summary">
-                <span><small>难度</small><b>{trainingDifficulties.find((item) => item.id === selectedTraining.difficulty)?.label}</b></span>
-                <span><small>操作</small><b>{selectedTraining.inputStyle}</b></span>
-                <span><small>时长</small><b>{selectedTraining.durationSec} 秒</b></span>
-                <span><small>主要指标</small><b>{selectedTraining.primaryMetric}</b></span>
+                <span><small>{tx("难度", "Tier")}</small><b>{getTrainingDifficultyLabel(selectedTraining.difficulty)}</b></span>
+                <span><small>{tx("操作", "Input")}</small><b>{selectedTrainingCopy.inputStyle}</b></span>
+                <span><small>{tx("时长", "Duration")}</small><b>{selectedTraining.durationSec} {tx("秒", "sec")}</b></span>
+                <span><small>{tx("主要指标", "Primary metric")}</small><b>{selectedTrainingCopy.primaryMetric}</b></span>
               </div>
-              <section><small>训练目标</small><p>{selectedTraining.description}</p></section>
-              <section><small>训练规则</small><p>{selectedTraining.method}</p></section>
-              <section><small>教练提示</small><p>{selectedTraining.coachCue}</p></section>
-              <section className="training-game-fit"><small>游戏推荐理由</small><div>{selectedTraining.games.map((game) => (
+              <section><small>{tx("训练目标", "Training goal")}</small><p>{selectedTrainingCopy.description}</p></section>
+              <section><small>{tx("训练规则", "Rules")}</small><p>{selectedTrainingCopy.method}</p></section>
+              <section><small>{tx("教练提示", "Coach cue")}</small><p>{selectedTrainingCopy.coachCue}</p></section>
+              <section className="training-game-fit"><small>{tx("游戏推荐理由", "Why it fits")}</small><div>{selectedTraining.games.map((game) => (
                 <span key={game}><b>{trainingGameLabels[game]}</b><em>{getTrainingGameFitReason(selectedTraining, game)}</em></span>
               ))}</div></section>
               {selectedTraining.available && <footer>
@@ -560,7 +777,7 @@ function ModesPage() {
                   if (!selectedTraining.playableMode) return;
                   setMode(selectedTraining.playableMode);
                   setPage("game");
-                }}>进入正式训练 <ChevronRight size={16} /></button>
+                }}>{tx("进入正式训练", "Enter training")} <ChevronRight size={16} /></button>
               </footer>}
             </motion.aside>
           </motion.div>
@@ -571,18 +788,19 @@ function ModesPage() {
 }
 
 function CatalogScenePreview({ training, settings, large = false }: { training: TrainingCatalogEntry; settings: TrainingSettings; large?: boolean }) {
+  const copy = getLocalizedTrainingCopy(training);
   if (training.available) {
     return (
       <div className={`catalog-scene-preview real grid-shot-settings-preview ${large ? "large" : ""}`}>
         <GridShotSettingsPreview settings={settings} />
-        <span>GRID SHOT · 正式场景实时预览</span>
+        <span>{tx("正式场景预览", "Live scene preview")}</span>
       </div>
     );
   }
   return (
     <div className={`catalog-scene-preview pending ${large ? "large" : ""}`}>
       <Target size={large ? 32 : 22} />
-      <span><small>SCENE PREVIEW</small><b>暂无场景预览</b><em>{training.targetForm} · 待开发</em></span>
+      <span><b>{tx("场景筹备中", "Scene in development")}</b><em>{copy.targetForm}</em></span>
     </div>
   );
 }
@@ -867,7 +1085,7 @@ function LegacyResults() {
   if (!r) return null;
   const rank = r.accuracy > 92 ? "S+" : r.accuracy > 84 ? "A" : "B";
   return (
-    <PageWrap title="训练结算" sub="SIMULATION COMPLETE">
+    <PageWrap title="训练结算">
       <div className="result-hero">
         <div>
           <span>本次评级</span>
@@ -922,14 +1140,14 @@ function LegacyEnhancedResults() {
   const r = current ?? readHistory()[0];
   if (!r)
     return (
-      <PageWrap title="训练结算" sub="NO SESSION">
+      <PageWrap title="训练结算">
         <button onClick={() => setPage("home")}>返回主页</button>
       </PageWrap>
     );
   const best = Math.max(...readHistory().map((x) => x.score)),
     delta = previous ? r.score - previous.score : 0;
   return (
-    <PageWrap title="训练结算" sub="SIMULATION COMPLETE">
+    <PageWrap title="训练结算">
       <div className="result-hero">
         <div>
           <span>本次评级</span>
@@ -1013,7 +1231,7 @@ function LegacySettingsPage() {
     systemDpr = window.devicePixelRatio || 1,
     renderDpr = Math.min(systemDpr, s.lowSpec ? 1.25 : 2);
   return (
-    <PageWrap title="系统设置" sub="CALIBRATION PANEL">
+    <PageWrap title="系统设置">
       <div className="settings-grid">
         <Panel title="鼠标与视野" action="INPUT">
           <Slider
@@ -1256,28 +1474,91 @@ function Slider({
     </label>
   );
 }
+
+function AccountAccessPage() {
+  const setPage = useApp((state) => state.setPage);
+  return (
+    <main className="account-access-page">
+      <header className="account-access-header">
+        <div className="account-access-brand"><BrandGlyph /><span>NEON <b>AIM</b></span></div>
+        <button className="account-access-back" onClick={() => setPage("home")}><ArrowLeft size={16} />{tx("返回大厅", "Back to lobby")}</button>
+      </header>
+      <div className="account-access-content"><ProfileWorkspace /></div>
+    </main>
+  );
+}
+
 function App() {
   const page = useApp((s) => s.page);
+  const language = useApp((s) => s.settings.language);
+  const initializeAuth = useAuthStore((s) => s.initialize);
+  const authStatus = useAuthStore((s) => s.status);
+  const reduceMotion = useReducedMotion();
+  useInterfaceAudioFeedback(page !== "game" && page !== "qa");
+  setAppLanguage(language);
+  useEffect(() => {
+    document.documentElement.lang = language;
+  }, [language]);
+  useEffect(() => {
+    void initializeAuth();
+  }, [initializeAuth]);
+  useEffect(() => {
+    if (authStatus !== "offline") return;
+    const retry = () => void initializeAuth();
+    const timer = window.setInterval(retry, 3000);
+    window.addEventListener("online", retry);
+    window.addEventListener("focus", retry);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("online", retry);
+      window.removeEventListener("focus", retry);
+    };
+  }, [authStatus, initializeAuth]);
+  useEffect(() => {
+    if (page === "profile") window.scrollTo({ top: 0, left: 0, behavior: "instant" });
+  }, [authStatus, page]);
+  useEffect(() => {
+    const restorePageFromHistory = () => useApp.setState({ page: pathPage() });
+    window.addEventListener("popstate", restorePageFromHistory);
+    return () => window.removeEventListener("popstate", restorePageFromHistory);
+  }, []);
   if (page === "boot") return <Boot />;
   if (page === "game") return <GamePage />;
   if (page === "qa" && import.meta.env.DEV) return <GridShotQaPage />;
+  if (page === "profile" && authStatus !== "authenticated") return <AccountAccessPage />;
+  const focusedPage = page === "settings" || page === "results";
+  const showTopbar = page !== "results";
   return (
-    <div className="shell">
+    <div className={["shell", focusedPage ? "focused-shell" : "", showTopbar ? "has-topbar" : ""].filter(Boolean).join(" ")}>
       <div className="ambient-stars" aria-hidden="true"><i /><i /><i /></div>
       <BrowserFrameMonitor />
-      <Nav />
+      {showTopbar && <TopNavigation />}
       <AnimatePresence mode="wait">
         <motion.div
           className="page"
           key={page}
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: -6 }}
+          initial={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 12, scale: .995, filter: "blur(6px)" }}
+          animate={{ opacity: 1, y: 0, scale: 1, filter: "blur(0px)" }}
+          exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: -8, scale: 1.002, filter: "blur(3px)" }}
+          transition={{ duration: reduceMotion ? .12 : .32, ease: [0.22, 0.72, 0.24, 1] }}
         >
+          {!reduceMotion && (
+            <motion.i
+              className="page-transition-scan"
+              aria-hidden="true"
+              initial={{ x: "-115%", opacity: 0 }}
+              animate={{ x: "115%", opacity: [0, .72, 0] }}
+              transition={{ duration: .48, ease: "easeOut" }}
+            />
+          )}
           {page === "home" ? (
             <HomePage />
           ) : page === "modes" ? (
             <ModesPage />
+          ) : page === "progress" || page === "tools" || page === "ranking" ? (
+            <FutureHubPage kind={page} />
+          ) : page === "profile" ? (
+            <ProfilePage />
           ) : page === "settings" ? (
             <SettingsPage />
           ) : (

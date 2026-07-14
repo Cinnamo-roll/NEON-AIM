@@ -24,12 +24,25 @@ describe("training settings behavior", () => {
   });
 
   it("provides actual defaults for every implemented category", () => {
-    expect(Object.keys(CATEGORY_DEFAULTS)).toEqual(["input", "crosshair", "graphics", "hud", "audio"]);
+    expect(Object.keys(CATEGORY_DEFAULTS)).toEqual(["general", "input", "crosshair", "graphics", "hud", "audio"]);
+    expect(CATEGORY_DEFAULTS.general).toEqual({ language: "zh-CN" });
     expect(CATEGORY_DEFAULTS.input).toMatchObject({ horizontalRatio: 1, verticalRatio: 1, invertX: false, invertY: false });
     expect(CATEGORY_DEFAULTS.graphics).not.toHaveProperty("fov");
     expect(CATEGORY_DEFAULTS.graphics).not.toHaveProperty("particleQuality");
     expect(CATEGORY_DEFAULTS.crosshair).toMatchObject({ crosshairCenterDot: true, crosshairRing: false, crosshairTop: true });
-    expect(CATEGORY_DEFAULTS.audio).toEqual({ volume: 0.55, muted: false });
+    expect(CATEGORY_DEFAULTS.audio).toEqual({ volume: 0.55, muted: false, interfaceVolume: 0.9, interfaceMuted: false });
+  });
+
+  it("sanitizes project language and interface sound preferences", () => {
+    expect(sanitizeTrainingSettings({ language: "en-US", interfaceVolume: 2, interfaceMuted: 1 })).toMatchObject({
+      language: "en-US",
+      interfaceVolume: 1,
+      interfaceMuted: true,
+    });
+    expect(sanitizeTrainingSettings({ language: "invalid", interfaceVolume: Number.NaN })).toMatchObject({
+      language: "zh-CN",
+      interfaceVolume: 0.9,
+    });
   });
 
   it("migrates the retired crosshair type into universal parameters", () => {

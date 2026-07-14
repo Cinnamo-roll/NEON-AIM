@@ -15,3 +15,6 @@ app:
   cors:
     allowed-origins:
       - ${FRONTEND_ORIGIN}
+  auth:
+    jwt-secret: ${AUTH_JWT_SECRET}
+    refresh-cookie-secure: true

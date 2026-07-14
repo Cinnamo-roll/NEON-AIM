@@ -1,4 +1,5 @@
 import { profiles } from "./sensitivity/sensitivity";
+import { isEnglish } from "../i18n";
 
 export type TrainingDifficultyId = "foundation" | "development" | "advanced" | "elite";
 export type TrainingCategoryId = "clicking" | "micro" | "switching" | "tracking" | "reaction" | "tactical" | "movement" | "hybrid";
@@ -32,13 +33,12 @@ export const trainingDifficulties: Array<{
   code: string;
   label: string;
   eyebrow: string;
-  description: string;
   color: string;
 }> = [
-  { id: "foundation", code: "F", label: "基础", eyebrow: "FOUNDATION", description: "先建立停稳再开枪、持续跟住和确认击杀后再转火的基本习惯。", color: "#70e8b2" },
-  { id: "development", code: "D", label: "进阶", eyebrow: "DEVELOPMENT", description: "加入移动目标、大角度定位和射击节奏，让单项动作逐步接近真实对枪。", color: "#63dce8" },
-  { id: "advanced", code: "A", label: "高阶", eyebrow: "ADVANCED", description: "在变向、近身、远距和短暂暴露窗口中保持稳定命中。", color: "#c99cff" },
-  { id: "elite", code: "E", label: "专家", eyebrow: "ELITE", description: "把搜索、转身、移动和目标判断组合进高强度连续训练。", color: "#ffbd70" },
+  { id: "foundation", code: "F", label: "基础", eyebrow: "FOUNDATION", color: "#70e8b2" },
+  { id: "development", code: "D", label: "进阶", eyebrow: "DEVELOPMENT", color: "#63dce8" },
+  { id: "advanced", code: "A", label: "高阶", eyebrow: "ADVANCED", color: "#c99cff" },
+  { id: "elite", code: "E", label: "专家", eyebrow: "ELITE", color: "#ffbd70" },
 ];
 
 export const trainingCategories: Record<TrainingCategoryId, { label: string; eyebrow: string }> = {
@@ -51,6 +51,67 @@ export const trainingCategories: Record<TrainingCategoryId, { label: string; eye
   movement: { label: "移动协同", eyebrow: "MOVEMENT" },
   hybrid: { label: "综合控制", eyebrow: "HYBRID" },
 };
+
+const englishDifficultyLabels: Record<TrainingDifficultyId, string> = {
+  foundation: "Foundation",
+  development: "Development",
+  advanced: "Advanced",
+  elite: "Elite",
+};
+
+const englishCategoryLabels: Record<TrainingCategoryId, string> = {
+  clicking: "Clicking",
+  micro: "Micro control",
+  switching: "Target switching",
+  tracking: "Tracking",
+  reaction: "Reaction",
+  tactical: "Tactical aim",
+  movement: "Movement",
+  hybrid: "Hybrid control",
+};
+
+const englishInputStyles: Record<TrainingInputStyle, string> = {
+  "单发点击": "Single-shot clicking",
+  "持续射击": "Continuous fire",
+  "点击与跟枪": "Clicking and tracking",
+  "移动与射击": "Movement and firing",
+};
+
+const englishCategoryCopy: Record<TrainingCategoryId, { focus: string; metric: string; target: string; cue: string }> = {
+  clicking: { focus: "fast acquisition and clean click timing", metric: "Accuracy · click pace", target: "Click targets", cue: "Move decisively, settle on the target, then fire." },
+  micro: { focus: "small corrections and precise stopping", metric: "Correction time · overshoot", target: "Small precision targets", cue: "Use only the correction you need and stop as soon as the crosshair arrives." },
+  switching: { focus: "target confirmation and efficient transfers", metric: "Transfer time · confirmation", target: "Multi-target set", cue: "Finish the current target before committing to the next one." },
+  tracking: { focus: "smooth tracking and direction reads", metric: "On-target time · smoothness", target: "Moving target", cue: "Match the target continuously instead of chasing it with short corrections." },
+  reaction: { focus: "visual confirmation and first-shot response", metric: "Reaction · first-shot accuracy", target: "Reactive target", cue: "Confirm the target, then deliver one controlled response." },
+  tactical: { focus: "crosshair placement and angle discipline", metric: "First-shot time · placement", target: "Tactical humanoid target", cue: "Hold the expected line and leave enough room for a readable reaction." },
+  movement: { focus: "aim compensation while moving", metric: "Movement accuracy · timing", target: "Movement duel target", cue: "Compensate for your own movement and fire inside a stable window." },
+  hybrid: { focus: "weapon rhythm and combined aim control", metric: "Effective hits · control", target: "Hybrid combat target", cue: "Keep each action distinct: acquire, fire, recover, then transfer." },
+};
+
+export type LocalizedTrainingCopy = Pick<TrainingCatalogEntry, "tag" | "description" | "method" | "coachCue" | "primaryMetric" | "targetForm" | "trainingBasis"> & { inputStyle: string };
+
+export function getTrainingDifficultyLabel(id: TrainingDifficultyId) {
+  return isEnglish() ? englishDifficultyLabels[id] : trainingDifficulties.find((item) => item.id === id)?.label ?? id;
+}
+
+export function getTrainingCategoryLabel(id: TrainingCategoryId) {
+  return isEnglish() ? englishCategoryLabels[id] : trainingCategories[id].label;
+}
+
+export function getLocalizedTrainingCopy(entry: TrainingCatalogEntry): LocalizedTrainingCopy {
+  if (!isEnglish()) return entry;
+  const copy = englishCategoryCopy[entry.category];
+  return {
+    tag: englishCategoryLabels[entry.category],
+    description: `${entry.name} develops ${copy.focus} in a focused ${entry.durationSec}-second drill.`,
+    method: `Complete the full scenario while keeping every action readable and repeatable; the drill reports ${copy.metric.toLowerCase()}.`,
+    coachCue: copy.cue,
+    primaryMetric: copy.metric,
+    inputStyle: englishInputStyles[entry.inputStyle],
+    targetForm: copy.target,
+    trainingBasis: `${englishCategoryLabels[entry.category]} · ${englishDifficultyLabels[entry.difficulty]}`,
+  };
+}
 
 export const trainingGameLabels: Record<string, string> = {
   cs2: "Counter-Strike 2",
@@ -353,6 +414,13 @@ const gameSkillApplications: Record<string, Partial<Record<TrainingSkillId, stri
 
 export function getTrainingGameFitReason(entry: TrainingCatalogEntry, gameId: string) {
   const profile = trainingGameProfiles[gameId];
+  if (isEnglish()) {
+    const gameName = trainingGameLabels[gameId] ?? gameId;
+    const copy = englishCategoryCopy[entry.category];
+    return profile
+      ? `${gameName} benefits from this drill's ${copy.focus}; ${copy.target.toLowerCase()} make ${copy.metric.toLowerCase()} directly measurable.`
+      : `Use this drill to improve ${copy.focus}.`;
+  }
   if (!profile) return `该训练用于强化${categoryTransferFocus[entry.category]}。`;
   const matchedSkills = entry.skills
     .filter((skill) => profile.requiredSkills.includes(skill));

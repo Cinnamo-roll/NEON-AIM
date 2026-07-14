@@ -31,7 +31,8 @@ class SystemControllerTests {
 		mockMvc.perform(get("/api/v1/system/modules"))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.data.length()").value(8))
-				.andExpect(jsonPath("$.data[0].status").value("planned"))
-				.andExpect(jsonPath("$.message").value("功能仍在准备中"));
+				.andExpect(jsonPath("$.data[0].status").value("active"))
+				.andExpect(jsonPath("$.data[1].status").value("active"))
+				.andExpect(jsonPath("$.message").value("用户与认证模块已开放，其余功能仍在准备中"));
 	}
 }
