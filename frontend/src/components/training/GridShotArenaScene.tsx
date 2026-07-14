@@ -27,17 +27,15 @@ import {
   type GridShotTargetModel,
 } from "../../game/targets/gridShotTargetModel";
 import type { TrainingSettings, TrainingState } from "../../game/types/training";
-import { getGridShotImpactVisual, getGridShotParticleTransform, GRID_SHOT_PARTICLE_DIRECTIONS, GRID_SHOT_SAFE_POSITIONS } from "./gridShotSceneLayout";
+import { getGridShotImpactVisual, getGridShotParticleTransform, GRID_SHOT_PARTICLE_DIRECTIONS, GRID_SHOT_SAFE_POSITIONS, GRID_SHOT_TARGET_DEPTH } from "./gridShotSceneLayout";
 
 const ACTIVE_TARGET_COUNT = GRID_SHOT_CONFIG.activeTargetCount;
-const TARGET_Z_MIN = -6.15;
-const TARGET_Z_MAX = -5.78;
 const CENTER_RAY = new THREE.Vector2(0, 0);
 const PANEL_POSITIONS = Array.from({ length: 15 }, (_, index) => ({
   x: (index % 5 - 2) * 2.48,
   y: (1 - Math.floor(index / 5)) * 2.28 + 0.12,
 }));
-const CEILING_RIBS = [-0.25, -1.85, -3.45, -5.05, -6.65];
+const CEILING_RIBS = [-0.25, -1.85, -3.45, -5.05, -6.65, -7.82];
 type SceneTarget = GridShotTargetModel & {
   position: THREE.Vector3;
   bornAt: number;
@@ -107,7 +105,7 @@ type TargetRefs = {
 function makeScenePool(): SceneTarget[] {
   const pool = createTargetPool().map((target) => ({
     ...target,
-    position: new THREE.Vector3(0, 0, -5.9),
+    position: new THREE.Vector3(0, 0, GRID_SHOT_TARGET_DEPTH.center),
     bornAt: 0,
     hitAt: 0,
     hitAccent: "normal" as const,
@@ -125,9 +123,9 @@ function placeTarget(target: SceneTarget, pool: SceneTarget[]) {
   let found = false;
   for (let attempt = 0; attempt < 36; attempt += 1) {
     target.position.set(
-      THREE.MathUtils.randFloat(-4.45, 4.45),
-      THREE.MathUtils.randFloat(-2.25, 2.3),
-      THREE.MathUtils.randFloat(TARGET_Z_MIN, TARGET_Z_MAX),
+      THREE.MathUtils.randFloat(-4.95, 4.95),
+      THREE.MathUtils.randFloat(-2.5, 2.55),
+      THREE.MathUtils.randFloat(GRID_SHOT_TARGET_DEPTH.min, GRID_SHOT_TARGET_DEPTH.max),
     );
     found = pool.every((other) =>
       other === target || other.state !== "active" || target.position.distanceToSquared(other.position) > 1.62,
@@ -161,68 +159,68 @@ export function ArenaArchitecture({ dynamicGrid = true }: { dynamicGrid?: boolea
 
   return (
     <group dispose={null}>
-      <mesh geometry={box} material={materials.wall} position={[0, 0.1, -6.68]} scale={[13.25, 7.65, 0.34]} />
-      <mesh geometry={box} material={materials.shell} position={[0, 3.78, -6.35]} scale={[13.7, 0.34, 0.95]} />
-      <mesh geometry={box} material={materials.shell} position={[0, -3.67, -6.28]} scale={[13.7, 0.38, 1.1]} />
+      <mesh geometry={box} material={materials.wall} position={[0, 0.1, -8.08]} scale={[14.15, 7.65, 0.34]} />
+      <mesh geometry={box} material={materials.shell} position={[0, 3.78, -7.75]} scale={[14.55, 0.34, 0.95]} />
+      <mesh geometry={box} material={materials.shell} position={[0, -3.67, -7.68]} scale={[14.55, 0.38, 1.1]} />
 
       {PANEL_POSITIONS.map((panel, index) => (
         <mesh
           key={`panel-${panel.x}-${panel.y}`}
           geometry={box}
           material={index % 3 === 1 ? materials.panelAlt : materials.panel}
-          position={[panel.x, panel.y, -6.46 - (index % 2) * 0.018]}
+          position={[panel.x, panel.y, -7.86 - (index % 2) * 0.018]}
           scale={[2.36, 2.16, 0.09]}
         />
       ))}
 
       {[-3.72, -1.24, 1.24, 3.72].map((x) => (
-        <mesh key={`seam-v-${x}`} geometry={box} material={materials.groove} position={[x, 0.1, -6.39]} scale={[0.032, 6.92, 0.035]} />
+        <mesh key={`seam-v-${x}`} geometry={box} material={materials.groove} position={[x, 0.1, -7.79]} scale={[0.032, 6.92, 0.035]} />
       ))}
       {[-1.08, 1.2].map((y) => (
-        <mesh key={`seam-h-${y}`} geometry={box} material={materials.groove} position={[0, y, -6.39]} scale={[12.25, 0.032, 0.035]} />
+        <mesh key={`seam-h-${y}`} geometry={box} material={materials.groove} position={[0, y, -7.79]} scale={[13.05, 0.032, 0.035]} />
       ))}
-      <mesh geometry={box} material={materials.trim} position={[0, 3.43, -6.22]} scale={[9.6, 0.045, 0.045]} />
-      <mesh geometry={box} material={materials.trim} position={[0, -3.21, -6.2]} scale={[9.6, 0.035, 0.035]} />
+      <mesh geometry={box} material={materials.trim} position={[0, 3.43, -7.62]} scale={[10.4, 0.045, 0.045]} />
+      <mesh geometry={box} material={materials.trim} position={[0, -3.21, -7.6]} scale={[10.4, 0.035, 0.035]} />
 
-      <group position={[-7.05, -0.03, -3.15]} rotation={[0, -0.24, 0]}>
-        <mesh geometry={box} material={materials.shell} scale={[0.34, 7.45, 7.3]} />
-        <mesh geometry={box} material={materials.panelAlt} position={[0.2, 0.1, 0.1]} scale={[0.14, 6.45, 5.6]} />
-        <mesh geometry={box} material={materials.trim} position={[0.3, 2.95, 0]} scale={[0.055, 0.055, 4.9]} />
+      <group position={[-7.45, -0.03, -3.55]} rotation={[0, -0.21, 0]}>
+        <mesh geometry={box} material={materials.shell} scale={[0.34, 7.45, 9.2]} />
+        <mesh geometry={box} material={materials.panelAlt} position={[0.2, 0.1, 0.1]} scale={[0.14, 6.45, 8.3]} />
+        <mesh geometry={box} material={materials.trim} position={[0.3, 2.95, 0]} scale={[0.055, 0.055, 7.4]} />
       </group>
-      <group position={[7.05, -0.03, -3.15]} rotation={[0, 0.24, 0]}>
-        <mesh geometry={box} material={materials.shell} scale={[0.34, 7.45, 7.3]} />
-        <mesh geometry={box} material={materials.panelAlt} position={[-0.2, 0.1, 0.1]} scale={[0.14, 6.45, 5.6]} />
-        <mesh geometry={box} material={materials.trim} position={[-0.3, 2.95, 0]} scale={[0.055, 0.055, 4.9]} />
+      <group position={[7.45, -0.03, -3.55]} rotation={[0, 0.21, 0]}>
+        <mesh geometry={box} material={materials.shell} scale={[0.34, 7.45, 9.2]} />
+        <mesh geometry={box} material={materials.panelAlt} position={[-0.2, 0.1, 0.1]} scale={[0.14, 6.45, 8.3]} />
+        <mesh geometry={box} material={materials.trim} position={[-0.3, 2.95, 0]} scale={[0.055, 0.055, 7.4]} />
       </group>
 
-      <mesh geometry={box} material={materials.shell} position={[0, 4.18, -2.8]} scale={[14.4, 0.3, 8.2]} />
+      <mesh geometry={box} material={materials.shell} position={[0, 4.18, -3.25]} scale={[15.2, 0.3, 10.5]} />
       {CEILING_RIBS.map((z) => (
         <mesh key={`ceiling-${z}`} geometry={box} material={materials.panelAlt} position={[0, 4.0, z]} scale={[13.6, 0.12, 0.22]} />
       ))}
       <mesh geometry={box} material={materials.light} position={[-3.7, 3.97, -2.85]} scale={[3.6, 0.035, 0.12]} />
       <mesh geometry={box} material={materials.light} position={[3.7, 3.97, -2.85]} scale={[3.6, 0.035, 0.12]} />
 
-      <mesh geometry={box} material={materials.shell} position={[0, -3.75, -2.55]} scale={[14.5, 0.28, 8.6]} />
+      <mesh geometry={box} material={materials.shell} position={[0, -3.75, -3.15]} scale={[15.25, 0.28, 10.8]} />
       {dynamicGrid && (
         <Grid
-          position={[0, -3.57, -2.45]}
-          args={[13.5, 8.2]}
+          position={[0, -3.57, -3.12]}
+          args={[14.2, 10.4]}
           cellSize={0.72}
           cellThickness={0.34}
           cellColor="#29404a"
           sectionSize={3.6}
           sectionThickness={0.5}
           sectionColor="#365b64"
-          fadeDistance={9.5}
+          fadeDistance={11}
           fadeStrength={1.8}
           infiniteGrid={false}
         />
       )}
 
-      <mesh geometry={box} material={materials.shell} position={[-8.5, 0.2, -10.5]} scale={[1.2, 6.6, 1.2]} />
-      <mesh geometry={box} material={materials.shell} position={[8.5, 0.2, -10.5]} scale={[1.2, 6.6, 1.2]} />
-      <mesh geometry={box} material={materials.light} position={[-8.1, 1.8, -9.8]} scale={[0.05, 2.2, 0.05]} />
-      <mesh geometry={box} material={materials.light} position={[8.1, 1.8, -9.8]} scale={[0.05, 2.2, 0.05]} />
+      <mesh geometry={box} material={materials.shell} position={[-8.8, 0.2, -11.4]} scale={[1.2, 6.6, 1.2]} />
+      <mesh geometry={box} material={materials.shell} position={[8.8, 0.2, -11.4]} scale={[1.2, 6.6, 1.2]} />
+      <mesh geometry={box} material={materials.light} position={[-8.4, 1.8, -10.7]} scale={[0.05, 2.2, 0.05]} />
+      <mesh geometry={box} material={materials.light} position={[8.4, 1.8, -10.7]} scale={[0.05, 2.2, 0.05]} />
     </group>
   );
 }
@@ -537,7 +535,7 @@ export const GridShotArenaScene = forwardRef<GridShotSceneApi, ArenaSceneProps>(
       <ambientLight intensity={settings.lowSpec ? 0.34 : 0.42} color="#b8cad2" />
       <hemisphereLight args={["#7f9eaa", "#10151a", settings.lowSpec ? 0.45 : 0.62]} />
       <directionalLight ref={mainLight} position={[0, 5.5, 2.8]} color="#d9f8ff" intensity={1.45} />
-      <pointLight position={[0, 1.2, -4.7]} color="#bceff3" intensity={4.2} distance={9} decay={2} />
+      <pointLight position={[0, 1.2, -6.1]} color="#bceff3" intensity={4.2} distance={10.5} decay={2} />
       <pointLight ref={rimLightLeft} position={[-6.2, 2.2, -2.2]} color="#3bb7c8" intensity={5.2} distance={8} decay={2} />
       <pointLight ref={rimLightRight} position={[6.2, 2.2, -2.2]} color="#3bb7c8" intensity={5.2} distance={8} decay={2} />
 

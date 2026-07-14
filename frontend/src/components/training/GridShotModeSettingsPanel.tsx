@@ -1,20 +1,25 @@
-import { Check, RotateCcw, Sparkles, X } from "lucide-react";
+import { Check, RotateCcw, Settings2, Sparkles, Target, X } from "lucide-react";
 import { useEffect, useState, type CSSProperties } from "react";
 import {
   DEFAULT_GRID_SHOT_SETTINGS,
+  GRID_SHOT_BENCHMARK,
   GRID_SHOT_SCENES,
   GRID_SHOT_TARGET_SIZES,
+  applyGridShotBenchmarkRules,
   getGridShotTargetSize,
   type GridShotDuration,
   type GridShotHitEffectStyle,
   type GridShotModeSettings,
+  type GridShotSessionType,
 } from "../../game/modes/gridShot/gridShotConfig";
 import { tx } from "../../i18n";
 import { GridShotSettingsPreview } from "./GridShotSettingsPreview";
 
 type GridShotModeSettingsPanelProps = {
   settings: GridShotModeSettings;
+  sessionType: GridShotSessionType;
   onApply: (settings: GridShotModeSettings) => void;
+  onSessionTypeChange: (sessionType: GridShotSessionType) => void;
   onClose: () => void;
 };
 
@@ -42,18 +47,25 @@ const targetSizeCopy = {
   large: { label: ["大", "Large"], note: ["快速热身", "Quick warm-up"] },
 } as const;
 
-export function GridShotModeSettingsPanel({ settings, onApply, onClose }: GridShotModeSettingsPanelProps) {
+export function GridShotModeSettingsPanel({ settings, sessionType, onApply, onSessionTypeChange, onClose }: GridShotModeSettingsPanelProps) {
   const [draft, setDraft] = useState(settings);
+  const [draftSessionType, setDraftSessionType] = useState(sessionType);
   const [previewTick, setPreviewTick] = useState(0);
   const [saved, setSaved] = useState(false);
   useEffect(() => setDraft(settings), [settings]);
-  const changed = (Object.keys(draft) as Array<keyof GridShotModeSettings>)
+  useEffect(() => setDraftSessionType(sessionType), [sessionType]);
+  const changed = draftSessionType !== sessionType || (Object.keys(draft) as Array<keyof GridShotModeSettings>)
     .some((key) => draft[key] !== settings[key]);
   const targetSize = getGridShotTargetSize(draft.targetSize);
   const save = () => {
     onApply({ ...draft });
+    onSessionTypeChange(draftSessionType);
     setSaved(true);
     window.setTimeout(onClose, 420);
+  };
+  const selectSessionType = (value: GridShotSessionType) => {
+    setDraftSessionType(value);
+    if (value === "benchmark") setDraft((current) => applyGridShotBenchmarkRules(current));
   };
 
   return (
@@ -65,6 +77,32 @@ export function GridShotModeSettingsPanel({ settings, onApply, onClose }: GridSh
           </div>
           <button type="button" className="icon-button" aria-label={tx("关闭训练设置", "Close training settings")} onClick={onClose}><X size={19} /></button>
         </header>
+
+        <section className="grid-shot-session-type-setting" data-session-type={draftSessionType} aria-label={tx("训练类型", "Training type")}>
+          <header className="grid-shot-session-type-heading">
+            <div>
+              <small>{tx("本局模式", "Session mode")}</small>
+              <b>{tx("决定本局成绩是否计入生涯基线", "Controls whether this result affects your career baseline")}</b>
+            </div>
+          </header>
+          <div className="grid-shot-session-type-options" role="group" aria-label={tx("选择训练类型", "Choose training type")}>
+            <button type="button" data-session-type="benchmark" className={draftSessionType === "benchmark" ? "active" : ""} aria-pressed={draftSessionType === "benchmark"} onClick={() => selectSessionType("benchmark")}>
+              <Target size={18} /><span><b>{tx("基准训练", "Benchmark")}</b><small>{tx("固定规则 · 计入生涯基线", "Fixed rules · counts toward baseline")}</small></span>
+            </button>
+            <button type="button" data-session-type="practice" className={draftSessionType === "practice" ? "active" : ""} aria-pressed={draftSessionType === "practice"} onClick={() => selectSessionType("practice")}>
+              <Settings2 size={18} /><span><b>{tx("自由练习", "Free practice")}</b><small>{tx("自定义规则 · 不影响生涯基线", "Custom rules · no baseline impact")}</small></span>
+            </button>
+          </div>
+          <div className="grid-shot-session-type-notice" data-session-type={draftSessionType}>
+            {draftSessionType === "benchmark" ? <Target size={19} /> : <Settings2 size={19} />}
+            <div>
+              <b>{draftSessionType === "benchmark" ? tx("本局将计入生涯基线", "This run counts toward your career baseline") : tx("按自己的节奏练习", "Practice with your own setup")}</b>
+              <p>{draftSessionType === "benchmark"
+                ? tx(`${GRID_SHOT_BENCHMARK.duration} 秒、中型目标、3 个同时目标保持固定。`, `${GRID_SHOT_BENCHMARK.duration} seconds, medium targets, and 3 active targets are fixed.`)
+                : tx("时长和目标尺寸都可以调整；成绩会保留在训练记录中，但不会改变生涯基线。", "Duration and target size are adjustable. The result stays in history without changing your career baseline.")}</p>
+            </div>
+          </div>
+        </section>
 
         <div className="grid-shot-training-preview">
           <div className="grid-shot-preview-heading">
@@ -103,7 +141,7 @@ export function GridShotModeSettingsPanel({ settings, onApply, onClose }: GridSh
           <div><b>{tx("训练时长", "Duration")}</b></div>
           <div className="grid-shot-duration-options" role="group" aria-label={tx("训练时长", "Duration")}>
             {DURATIONS.map((duration) => (
-              <button type="button" className={draft.duration === duration ? "active" : ""} aria-pressed={draft.duration === duration} onClick={() => setDraft((current) => ({ ...current, duration }))} key={duration}>
+              <button type="button" disabled={draftSessionType === "benchmark"} className={draft.duration === duration ? "active" : ""} aria-pressed={draft.duration === duration} onClick={() => setDraft((current) => ({ ...current, duration }))} key={duration}>
                 {duration}<small>{tx("秒", "sec")}</small>
               </button>
             ))}
@@ -114,7 +152,7 @@ export function GridShotModeSettingsPanel({ settings, onApply, onClose }: GridSh
           <div><b>{tx("目标尺寸", "Target size")}</b></div>
           <div className="grid-shot-target-size-options" role="group" aria-label={tx("目标尺寸", "Target size")}>
             {GRID_SHOT_TARGET_SIZES.map((option) => (
-              <button type="button" className={draft.targetSize === option.id ? "active" : ""} aria-pressed={draft.targetSize === option.id} onClick={() => { setDraft((current) => ({ ...current, targetSize: option.id })); setPreviewTick((tick) => tick + 1); }} key={option.id}>
+              <button type="button" disabled={draftSessionType === "benchmark"} className={draft.targetSize === option.id ? "active" : ""} aria-pressed={draft.targetSize === option.id} onClick={() => { setDraft((current) => ({ ...current, targetSize: option.id })); setPreviewTick((tick) => tick + 1); }} key={option.id}>
                 <b>{tx(targetSizeCopy[option.id].label[0], targetSizeCopy[option.id].label[1])}</b><small>{tx(targetSizeCopy[option.id].note[0], targetSizeCopy[option.id].note[1])}</small>
               </button>
             ))}
@@ -155,7 +193,7 @@ export function GridShotModeSettingsPanel({ settings, onApply, onClose }: GridSh
 
         <footer>
           <span>{saved ? tx("已保存", "Saved") : changed ? tx("有未保存的修改", "Unsaved changes") : ""}</span>
-          <button type="button" onClick={() => { setDraft(DEFAULT_GRID_SHOT_SETTINGS); setPreviewTick((tick) => tick + 1); }}><RotateCcw size={16} />{tx("恢复默认", "Reset defaults")}</button>
+          <button type="button" onClick={() => { setDraft(draftSessionType === "benchmark" ? applyGridShotBenchmarkRules(DEFAULT_GRID_SHOT_SETTINGS) : DEFAULT_GRID_SHOT_SETTINGS); setPreviewTick((tick) => tick + 1); }}><RotateCcw size={16} />{tx("恢复默认", "Reset defaults")}</button>
           <button type="button" onClick={onClose}>{tx("取消", "Cancel")}</button>
           <button type="button" className="primary" disabled={!changed || saved} onClick={save}><Check size={16} />{saved ? tx("已保存", "Saved") : tx("保存训练设置", "Save training settings")}</button>
         </footer>

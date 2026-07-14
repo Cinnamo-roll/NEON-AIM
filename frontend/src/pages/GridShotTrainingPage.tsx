@@ -1,5 +1,5 @@
 import { Canvas } from "@react-three/fiber";
-import { Home, Play, RotateCcw, Settings as SettingsIcon, SlidersHorizontal } from "lucide-react";
+import { Flag, Home, Play, RotateCcw, Settings as SettingsIcon, SlidersHorizontal, Target } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   GridShotArenaScene,
@@ -16,8 +16,18 @@ import { AudioManager, countdownWarningSeconds } from "../game/audio/AudioManage
 import { CanvasPerformanceMonitor, RenderScheduler } from "../game/performance/PerformanceMonitor";
 import { usePerformanceStore } from "../game/performance/performanceStore";
 import { GRID_SHOT_QA_DURATION } from "../game/qa/gridShotQa";
-import { getGridShotTargetSize, type GridShotModeSettings } from "../game/modes/gridShot/gridShotConfig";
+import {
+  getGridShotTargetSize,
+  type GridShotModeSettings,
+  type GridShotSessionType,
+} from "../game/modes/gridShot/gridShotConfig";
 import { tx } from "../i18n";
+import { useAuthStore } from "../features/auth/authStore";
+import {
+  formatCoachingTarget,
+  getTrainingCoachingTask,
+  type TrainingCoachingTask,
+} from "../game/analysis/trainingCoachingTaskService";
 import type {
   PointerInputDebugSnapshot,
   PointerInputMode,
@@ -87,14 +97,16 @@ const emptyFeedbackSlots = (): FeedbackSlot[] => Array.from({ length: 4 }, (_, i
 type GridShotTrainingPageProps = {
   settings: TrainingSettings;
   gridShotSettings: GridShotModeSettings;
+  sessionType: GridShotSessionType;
   onHome: () => void;
   onApplySettings: (value: Partial<TrainingSettings>) => void;
   onApplyGridShotSettings: (value: Partial<GridShotModeSettings>) => void;
+  onSessionTypeChange: (value: GridShotSessionType) => void;
   onResult: (record: GridShotHistoryRecord) => void;
   qaMode?: boolean;
 };
 
-export function GridShotTrainingPage({ settings, gridShotSettings, onHome, onApplySettings, onApplyGridShotSettings, onResult, qaMode = false }: GridShotTrainingPageProps) {
+export function GridShotTrainingPage({ settings, gridShotSettings, sessionType, onHome, onApplySettings, onApplyGridShotSettings, onSessionTypeChange, onResult, qaMode = false }: GridShotTrainingPageProps) {
   const query = useMemo(() => new URLSearchParams(location.search), []);
   const devVisual = import.meta.env.DEV && query.get("devVisual") === "1";
   const devEndSession = import.meta.env.DEV && query.get("devEndSession") === "1";
@@ -102,6 +114,9 @@ export function GridShotTrainingPage({ settings, gridShotSettings, onHome, onApp
   const visualMode = qaMode || devVisual;
   const duration = qaMode ? QA_DURATION : devVisual ? 30 : devEndSession ? 3 : gridShotSettings.duration;
   const activeTargetSize = getGridShotTargetSize(gridShotSettings.targetSize);
+  const benchmarkMode = !visualMode && sessionType === "benchmark";
+  const authStatus = useAuthStore((state) => state.status);
+  const isAdmin = useAuthStore((state) => state.user?.role === "ADMIN");
 
   const machineRef = useRef<TrainingSessionMachine>(createTrainingSessionMachine(crypto.randomUUID()));
   const statsRef = useRef(createEmptyGridShotStats(machineRef.current.sessionId, duration));
@@ -120,6 +135,7 @@ export function GridShotTrainingPage({ settings, gridShotSettings, onHome, onApp
   const [pointerInputMode, setPointerInputMode] = useState<PointerInputMode>("unlocked");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [trainingSettingsOpen, setTrainingSettingsOpen] = useState(false);
+  const [coachingTask, setCoachingTask] = useState<TrainingCoachingTask | null>(null);
 
   const fullscreenRootRef = useRef<HTMLDivElement>(null);
   const hudRef = useRef<HTMLDivElement>(null);
@@ -138,6 +154,20 @@ export function GridShotTrainingPage({ settings, gridShotSettings, onHome, onApp
     combo: () => gridShotSettings.comboVolume,
     muted: () => settings.muted,
   }), [gridShotSettings.comboVolume, gridShotSettings.hitVolume, gridShotSettings.missVolume, settings.muted, settings.volume]);
+
+  useEffect(() => {
+    if (!benchmarkMode || !isAdmin || authStatus !== "authenticated") {
+      setCoachingTask(null);
+      return;
+    }
+    let active = true;
+    void getTrainingCoachingTask("grid-shot").then((task) => {
+      if (active) setCoachingTask(task?.status === "ACTIVE" ? task : null);
+    }).catch(() => {
+      if (active) setCoachingTask(null);
+    });
+    return () => { active = false; };
+  }, [authStatus, benchmarkMode, isAdmin]);
 
   const schedule = useCallback((callback: () => void, delay: number) => {
     const timer = window.setTimeout(callback, delay);
@@ -442,7 +472,10 @@ export function GridShotTrainingPage({ settings, gridShotSettings, onHome, onApp
     const saveClaim = claimResultSave(machineRef.current);
     commit(saveClaim);
     if (saveClaim.changed) {
-      sessionResultRef.current = createGridShotRecord(statsRef.current, duration);
+      sessionResultRef.current = {
+        ...createGridShotRecord(statsRef.current, duration),
+        sessionType,
+      };
     }
     const navigationClaim = claimResultNavigation(machineRef.current);
     commit(navigationClaim);
@@ -450,7 +483,7 @@ export function GridShotTrainingPage({ settings, gridShotSettings, onHome, onApp
       if (document.fullscreenElement) void document.exitFullscreen?.().catch(() => undefined);
       onResult(sessionResultRef.current);
     }
-  }, [commit, duration, onResult, trainingState, visualMode]);
+  }, [commit, duration, onResult, sessionType, trainingState, visualMode]);
 
   useEffect(() => {
     if (import.meta.env.DEV) {
@@ -574,7 +607,21 @@ export function GridShotTrainingPage({ settings, gridShotSettings, onHome, onApp
       )}
       {trainingState === "ready" && (
         <div className="training-overlay ready-panel">
+          <div className="grid-shot-benchmark-badge" data-session-type={benchmarkMode ? "benchmark" : "practice"}>
+            {benchmarkMode ? <Target size={14} /> : <SlidersHorizontal size={14} />}
+            <b>{benchmarkMode ? tx("基准训练", "Benchmark") : tx("自由练习", "Free practice")}</b>
+            <span>{benchmarkMode ? tx("本局将计入生涯基线", "This run counts toward your career baseline") : tx("本局会保存，但不影响生涯基线", "Saved without affecting your career baseline")}</span>
+          </div>
           <h1>GRID <b>SHOT</b></h1>
+          {coachingTask?.status === "ACTIVE" && (
+            <div className="grid-shot-coaching-goal">
+              <div><Flag size={14} /><span>{tx(`本轮目标 · 第 ${coachingTask.progress.attemptsCompleted + 1}/${coachingTask.progress.maxAttempts} 局`, `Current goal · run ${coachingTask.progress.attemptsCompleted + 1}/${coachingTask.progress.maxAttempts}`)}</span><b>{coachingTask.title}</b></div>
+              <div>{coachingTask.targets.map((target) => {
+                const progress = coachingTask.progress.targets.find((item) => item.metric === target.metric);
+                return <span key={target.metric}><small>{target.label} · {progress?.passCount ?? 0}/{progress?.requiredPasses ?? coachingTask.progress.requiredPasses}</small><b>{formatCoachingTarget(target)}</b></span>;
+              })}</div>
+            </div>
+          )}
           <div className="ready-metrics">
             <span>{tx("训练时长", "Duration")}<b>{duration} {tx("秒", "sec")}</b></span>
             <span>{tx("同时目标", "Active targets")}<b>3</b></span>
@@ -582,7 +629,7 @@ export function GridShotTrainingPage({ settings, gridShotSettings, onHome, onApp
             <span>{tx("目标尺寸", "Target size")}<b>{tx(targetSizeLabels[activeTargetSize.id][0], targetSizeLabels[activeTargetSize.id][1])}</b></span>
           </div>
           <div className="ready-actions">
-            <button className="primary" onClick={start}><Play size={18} />{tx("开始训练", "Start training")}</button>
+            <button className="primary" onClick={start}><Play size={18} />{benchmarkMode ? tx("开始基准训练", "Start benchmark") : tx("开始自由练习", "Start free practice")}</button>
             <button onClick={() => setTrainingSettingsOpen(true)}><SlidersHorizontal size={17} />{tx("训练设置", "Training settings")}</button>
             <button onClick={onHome}><Home size={17} />{tx("返回大厅", "Back to lobby")}</button>
           </div>
@@ -637,7 +684,9 @@ export function GridShotTrainingPage({ settings, gridShotSettings, onHome, onApp
       {trainingSettingsOpen && (
         <GridShotModeSettingsPanel
           settings={gridShotSettings}
+          sessionType={sessionType}
           onApply={onApplyGridShotSettings}
+          onSessionTypeChange={onSessionTypeChange}
           onClose={() => setTrainingSettingsOpen(false)}
         />
       )}

@@ -1,11 +1,17 @@
 import type { GridShotHitEffectStyle } from "../../game/modes/gridShot/gridShotConfig";
 
+export const GRID_SHOT_TARGET_DEPTH = {
+  center: -7.28,
+  min: -7.48,
+  max: -7.08,
+} as const;
+
 export const GRID_SHOT_SAFE_POSITIONS = [
-  [-3.45, 1.25, -5.9],
-  [0, -0.2, -5.86],
-  [3.45, -1.15, -5.94],
-  [-2.3, -1.9, -5.84],
-  [2.35, 1.9, -6.02],
+  [-3.85, 1.4, -7.28],
+  [0, -0.2, -7.22],
+  [3.85, -1.3, -7.34],
+  [-2.55, -2.1, -7.18],
+  [2.6, 2.1, -7.42],
 ] as const;
 
 export const GRID_SHOT_PARTICLE_DIRECTIONS = [

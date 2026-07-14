@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_GRID_SHOT_SETTINGS, getGridShotScene, gridShotParticleCount, sanitizeGridShotModeSettings } from "./gridShotConfig";
+import {
+  DEFAULT_GRID_SHOT_SETTINGS,
+  GRID_SHOT_BENCHMARK,
+  getGridShotScene,
+  gridShotParticleCount,
+  isGridShotBenchmarkConfiguration,
+  isGridShotBenchmarkSettings,
+  sanitizeGridShotModeSettings,
+} from "./gridShotConfig";
 
 describe("Grid Shot mode settings", () => {
   it("keeps supported duration and target size tier", () => {
@@ -9,6 +17,13 @@ describe("Grid Shot mode settings", () => {
       targetSize: "large",
       hitVolume: 0.8,
     });
+  });
+
+  it("recognizes the versioned 60 second medium benchmark", () => {
+    expect(isGridShotBenchmarkSettings(GRID_SHOT_BENCHMARK)).toBe(true);
+    expect(isGridShotBenchmarkSettings({ duration: 30, targetSize: "medium" })).toBe(false);
+    expect(isGridShotBenchmarkConfiguration("grid-shot:60s:medium", 1, 1)).toBe(true);
+    expect(isGridShotBenchmarkConfiguration("grid-shot:60s:medium", 2, 1)).toBe(false);
   });
 
   it("migrates legacy target scales and rejects unsupported durations", () => {

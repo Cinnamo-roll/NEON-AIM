@@ -2,14 +2,19 @@ import { Fragment, useEffect, useId, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   Check,
+  CircleAlert,
+  CircleCheck,
   ChevronDown,
   ChevronUp,
   Copy,
   Crosshair as CrosshairIcon,
   Eye,
+  EyeOff,
+  KeyRound,
   Languages,
   MonitorCog,
   MousePointer2,
+  PlugZap,
   RotateCcw,
   Shuffle,
   Undo2,
@@ -19,6 +24,21 @@ import { TrainingCrosshair } from "../components/training/Crosshair";
 import { GridShotSettingsPreview } from "../components/training/GridShotSettingsPreview";
 import { GameIcon } from "../components/GameIcon";
 import { interfaceAudio } from "../game/audio/interfaceAudio";
+import {
+  activeModelProvider,
+  DEFAULT_MODEL_API_SETTINGS,
+  MODEL_OPTIONS,
+  MODEL_PROVIDERS,
+  readModelApiSettings,
+  saveModelApiSettings,
+  type ModelProviderId,
+  type ModelApiSettings,
+} from "../game/analysis/modelApiSettings";
+import {
+  testModelProviderConnection,
+  type ModelProviderConnectionResult,
+} from "../game/analysis/modelProviderConnectionService";
+import { useAuthStore } from "../features/auth/authStore";
 import { tx } from "../i18n";
 import { FPS_OPTIONS, type FpsLimit } from "../game/performance/frameRate";
 import {
@@ -39,6 +59,12 @@ import {
 import type { TrainingSettings } from "../game/types/training";
 
 type Tab = "general" | "input" | "crosshair" | "display" | "audio";
+type ChannelTestState = {
+  status: "idle" | "testing" | "success" | "failed";
+  fingerprint: string;
+  result?: ModelProviderConnectionResult;
+  message?: string;
+};
 
 const tabs: Array<{ id: Tab; zh: string; en: string; icon: typeof MousePointer2 }> = [
   { id: "general", zh: "通用", en: "General", icon: Languages },
@@ -61,10 +87,11 @@ const crosshairPresetEnglish: Record<CrosshairPresetId, string> = {
 };
 
 function SettingRow({ label, help, value, children }: { label: string; help?: string; value?: string; children: React.ReactNode }) {
+  const hasValue = Boolean(value);
   return (
-    <div className="setting-row">
+    <div className={`setting-row ${hasValue ? "has-value" : "no-value"}`}>
       <div className="setting-copy"><b>{label}</b>{help && <small>{help}</small>}</div>
-      <output className={value ? "" : "empty"}>{value ?? ""}</output>
+      {hasValue && <output>{value}</output>}
       <div className="setting-control">{children}</div>
     </div>
   );
@@ -279,7 +306,12 @@ type SettingsWorkspaceProps = {
 };
 
 export function SettingsWorkspace({ settings, onApply, onClose, context = "global" }: SettingsWorkspaceProps) {
+  const isAdmin = useAuthStore((state) => state.user?.role === "ADMIN");
   const [draft, setDraft] = useState(settings);
+  const [modelApiDraft, setModelApiDraft] = useState<ModelApiSettings>(() => readModelApiSettings());
+  const [savedModelApi, setSavedModelApi] = useState<ModelApiSettings>(() => readModelApiSettings());
+  const [showApiKey, setShowApiKey] = useState(false);
+  const [channelTest, setChannelTest] = useState<ChannelTestState>({ status: "idle", fingerprint: "" });
   const [tab, setTab] = useState<Tab>("general");
   const [confirm, setConfirm] = useState(0);
   const [source, setSource] = useState("cs2");
@@ -301,7 +333,8 @@ export function SettingsWorkspace({ settings, onApply, onClose, context = "globa
   }, [confirm, onApply]);
 
   const changedKeys = useMemo(() => (Object.keys(draft) as Array<keyof TrainingSettings>).filter((key) => draft[key] !== settings[key]), [draft, settings]);
-  const changed = changedKeys.length > 0;
+  const modelApiChanged = isAdmin && JSON.stringify(modelApiDraft) !== JSON.stringify(savedModelApi);
+  const changed = changedKeys.length > 0 || modelApiChanged;
   const graphicsChanged = changedKeys.some((key) => GRAPHICS_KEYS.includes(key));
   const effectiveDpr = Math.min((draft.dprMode === "auto" ? devicePixelRatio : draft.dprMode) * draft.renderScale, 2.5);
   const fullscreenWidth = typeof window === "undefined" ? 2560 : window.screen.width;
@@ -314,11 +347,57 @@ export function SettingsWorkspace({ settings, onApply, onClose, context = "globa
   const convertedForTarget = converted === null ? null : target === "neon" ? converted / draft.horizontalRatio : converted;
   const interfaceVolume = draft.volume * draft.interfaceVolume;
   const interfaceMuted = draft.muted || draft.interfaceMuted;
+  const activeProviderConfig = activeModelProvider(modelApiDraft);
+  const activeModelOptions = MODEL_OPTIONS[modelApiDraft.activeProvider];
+  const activeModelChoice = activeModelOptions.some((option) => option.id === activeProviderConfig.model)
+    ? activeProviderConfig.model
+    : "custom";
+  const channelFingerprint = `${modelApiDraft.activeProvider}:${activeProviderConfig.apiKey}:${activeProviderConfig.model}`;
+  const visibleChannelTest = channelTest.fingerprint === channelFingerprint ? channelTest : undefined;
+  const patchModelProvider = (provider: ModelProviderId, patch: Partial<{ apiKey: string; model: string }>) => {
+    setModelApiDraft((current) => ({
+      ...current,
+      providers: {
+        ...current.providers,
+        [provider]: { ...current.providers[provider], ...patch },
+      },
+    }));
+  };
   const patch = <K extends keyof TrainingSettings>(key: K, value: TrainingSettings[K]) => setDraft((current) => ({ ...current, [key]: value }));
   const patchGraphics = <K extends keyof TrainingSettings>(key: K, value: TrainingSettings[K]) => patch(key, value);
+  const testChannel = async () => {
+    if (!activeProviderConfig.apiKey.trim() || !activeProviderConfig.model.trim()) return;
+    const fingerprint = channelFingerprint;
+    setChannelTest({ status: "testing", fingerprint });
+    try {
+      const result = await testModelProviderConnection(
+        modelApiDraft.activeProvider,
+        activeProviderConfig.apiKey.trim(),
+        activeProviderConfig.model.trim(),
+      );
+      setChannelTest({
+        status: result.success ? "success" : "failed",
+        fingerprint,
+        result,
+        message: result.message ?? undefined,
+      });
+    } catch (error) {
+      setChannelTest({
+        status: "failed",
+        fingerprint,
+        message: error instanceof Error ? error.message : tx("通道测试失败", "Connection test failed"),
+      });
+    }
+  };
   const apply = () => {
     rollbackRef.current = settings;
     onApply(draft);
+    if (modelApiChanged) {
+      saveModelApiSettings(modelApiDraft);
+      const saved = readModelApiSettings();
+      setModelApiDraft(saved);
+      setSavedModelApi(saved);
+    }
     if (graphicsChanged) setConfirm(12);
   };
   const resetCategory = () => {
@@ -326,6 +405,14 @@ export function SettingsWorkspace({ settings, onApply, onClose, context = "globa
       ? { ...CATEGORY_DEFAULTS.graphics, ...CATEGORY_DEFAULTS.hud }
       : CATEGORY_DEFAULTS[tab];
     setDraft((current) => ({ ...current, ...defaults }));
+    if (tab === "general" && isAdmin) setModelApiDraft({
+      activeProvider: DEFAULT_MODEL_API_SETTINGS.activeProvider,
+      providers: {
+        openai: { ...DEFAULT_MODEL_API_SETTINGS.providers.openai },
+        deepseek: { ...DEFAULT_MODEL_API_SETTINGS.providers.deepseek },
+        bailian: { ...DEFAULT_MODEL_API_SETTINGS.providers.bailian },
+      },
+    });
   };
   const copyConverted = async () => {
     if (convertedForTarget === null) return;
@@ -344,6 +431,93 @@ export function SettingsWorkspace({ settings, onApply, onClose, context = "globa
           </div>
         </SettingRow>
       </SettingsSection>
+      {isAdmin && <SettingsSection title={tx("AI 深度分析", "AI deep analysis")}>
+        <SettingRow label={tx("模型服务", "Provider")}>
+          <div className="language-choice model-provider-choice" role="group" aria-label={tx("模型服务", "Model provider")}>
+            {MODEL_PROVIDERS.map((provider) => (
+              <button
+                type="button"
+                key={provider.id}
+                className={modelApiDraft.activeProvider === provider.id ? "active" : ""}
+                aria-pressed={modelApiDraft.activeProvider === provider.id}
+                onClick={() => setModelApiDraft((current) => ({ ...current, activeProvider: provider.id }))}
+              >{provider.label}</button>
+            ))}
+          </div>
+        </SettingRow>
+        <SettingRow
+          label="API Key"
+        >
+          <span className="api-key-control">
+            <input
+              key={modelApiDraft.activeProvider}
+              aria-label={`${modelApiDraft.activeProvider} API Key`}
+              name={`model-api-key-${modelApiDraft.activeProvider}`}
+              autoComplete="new-password"
+              data-1p-ignore
+              data-lpignore="true"
+              spellCheck={false}
+              type={showApiKey ? "text" : "password"}
+              placeholder="sk-..."
+              value={activeProviderConfig.apiKey}
+              onChange={(event) => patchModelProvider(modelApiDraft.activeProvider, { apiKey: event.target.value })}
+            />
+            <button type="button" aria-label={showApiKey ? tx("隐藏 API Key", "Hide API key") : tx("显示 API Key", "Show API key")} onClick={() => setShowApiKey((value) => !value)}>
+              {showApiKey ? <EyeOff size={15} /> : <Eye size={15} />}
+            </button>
+          </span>
+        </SettingRow>
+        <SettingRow
+          label={tx("分析模型", "Analysis model")}
+        >
+          <div className="model-picker-control">
+            <SelectControl
+              label={tx("常用模型", "Common model")}
+              value={activeModelChoice}
+              volume={interfaceVolume}
+              muted={interfaceMuted}
+              onChange={(value) => patchModelProvider(modelApiDraft.activeProvider, {
+                model: value === "custom" ? "" : value,
+              })}
+            >
+              {activeModelOptions.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
+              <option value="custom">{tx("自定义模型…", "Custom model…")}</option>
+            </SelectControl>
+            {activeModelChoice === "custom" && <input
+              className="model-name-control"
+              aria-label={tx("自定义模型名", "Custom model name")}
+              maxLength={80}
+              autoFocus
+              spellCheck={false}
+              placeholder={tx("输入模型 ID", "Enter model ID")}
+              value={activeProviderConfig.model}
+              onChange={(event) => patchModelProvider(modelApiDraft.activeProvider, { model: event.target.value })}
+            />}
+          </div>
+        </SettingRow>
+        <SettingRow label={tx("通道测试", "Connection test")} value={visibleChannelTest?.status === "success" ? tx("可用", "Available") : visibleChannelTest?.status === "failed" ? tx("失败", "Failed") : undefined}>
+          <div className="channel-test-control" data-state={visibleChannelTest?.status ?? "idle"}>
+            <button
+              type="button"
+              disabled={!activeProviderConfig.apiKey.trim() || !activeProviderConfig.model.trim() || visibleChannelTest?.status === "testing"}
+              onClick={() => void testChannel()}
+            >
+              {visibleChannelTest?.status === "testing" ? <RotateCcw className="spin" size={15} /> : <PlugZap size={15} />}
+              {visibleChannelTest?.status === "testing" ? tx("正在测试", "Testing") : tx("测试当前通道", "Test connection")}
+            </button>
+            {visibleChannelTest?.status === "success" && visibleChannelTest.result && (
+              <span><CircleCheck size={15} />{tx(
+                `${visibleChannelTest.result.resolvedModel ?? activeProviderConfig.model} · ${visibleChannelTest.result.durationMs}ms · ${visibleChannelTest.result.inputTokens + visibleChannelTest.result.outputTokens} Token`,
+                `${visibleChannelTest.result.resolvedModel ?? activeProviderConfig.model} · ${visibleChannelTest.result.durationMs}ms · ${visibleChannelTest.result.inputTokens + visibleChannelTest.result.outputTokens} tokens`,
+              )}</span>
+            )}
+            {visibleChannelTest?.status === "failed" && (
+              <span><CircleAlert size={15} />{visibleChannelTest.message ?? tx("Key、模型或通道不可用", "The key, model, or provider is unavailable")}</span>
+            )}
+          </div>
+        </SettingRow>
+        <div className="setting-fact ai-key-fact"><KeyRound size={16} /><div><b>{tx("成本控制已启用", "Cost controls enabled")}</b><span>{tx("单局只发送核心指标、三个阶段和最多五个信号；完整点击事件不会发送给模型。", "Each request sends only core metrics, three phases, and up to five signals. Raw click events are never sent to the model.")}</span></div></div>
+      </SettingsSection>}
     </>
   );
 
@@ -443,7 +617,7 @@ export function SettingsWorkspace({ settings, onApply, onClose, context = "globa
         <section className={`settings-content tab-${tab}`}>{content}</section>
         {hasPreview && <SettingsPreview tab={tab} settings={draft} />}
       </div>
-      <div className="settings-actions"><div><span className={changed ? "dirty" : ""} />{changed ? `${tx("已修改", "Changed")} ${changedKeys.length} ${tx("项", "items")}` : tx("所有更改均已保存", "All changes saved")}</div><button type="button" onClick={() => setDraft(settings)} disabled={!changed}><Undo2 size={16} />{tx("撤销修改", "Undo changes")}</button><button type="button" onClick={resetCategory}><RotateCcw size={16} />{tx("恢复本类默认", "Reset category")}</button><button type="button" className="primary" disabled={!changed} onClick={apply}><Check size={17} />{tx("保存设置", "Save settings")}</button></div>
+      <div className="settings-actions"><div><span className={changed ? "dirty" : ""} />{changed ? `${tx("已修改", "Changed")} ${changedKeys.length + (modelApiChanged ? 1 : 0)} ${tx("项", "items")}` : tx("所有更改均已保存", "All changes saved")}</div><button type="button" onClick={() => { setDraft(settings); setModelApiDraft(savedModelApi); }} disabled={!changed}><Undo2 size={16} />{tx("撤销修改", "Undo changes")}</button><button type="button" onClick={resetCategory}><RotateCcw size={16} />{tx("恢复本类默认", "Reset category")}</button><button type="button" className="primary" disabled={!changed} onClick={apply}><Check size={17} />{tx("保存设置", "Save settings")}</button></div>
       {confirm > 0 && <div className="graphics-confirm"><h3>{tx("保留新的画面设置？", "Keep these display settings?")}</h3><strong>{confirm}</strong><p>{tx("倒计时结束将自动恢复。", "Settings will revert when the timer ends.")}</p><div><button type="button" className="primary" onClick={() => setConfirm(0)}>{tx("保留设置", "Keep settings")}</button><button type="button" onClick={() => { onApply(rollbackRef.current); setDraft(rollbackRef.current); setConfirm(0); }}>{tx("恢复旧设置", "Revert")}</button></div></div>}
     </main>
   );

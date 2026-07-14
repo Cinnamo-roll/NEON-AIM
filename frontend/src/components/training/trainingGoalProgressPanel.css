@@ -1,0 +1,125 @@
+.training-goal-progress {
+  --goal-tone-rgb: 105 205 162;
+  margin-top: 16px;
+  overflow: hidden;
+  border: 1px solid rgb(var(--goal-tone-rgb) / 20%);
+  border-radius: 14px;
+  background: linear-gradient(145deg, rgb(13 22 28 / 96%), rgb(7 15 22 / 96%));
+  box-shadow: inset 0 1px rgb(255 255 255 / 2.5%);
+}
+
+.training-goal-progress[data-state="PARTIAL"] { --goal-tone-rgb: 216 174 98; }
+.training-goal-progress[data-state="NOT_ACHIEVED"] { --goal-tone-rgb: 211 121 112; }
+
+.training-goal-progress__header {
+  display: grid;
+  min-height: 76px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  margin: 0;
+  padding: 14px 18px;
+  border-bottom: 1px solid rgb(207 218 228 / 7%);
+  background: linear-gradient(90deg, rgb(var(--goal-tone-rgb) / 7%), transparent 55%);
+}
+
+.training-goal-progress__status-icon {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  border: 1px solid rgb(var(--goal-tone-rgb) / 20%);
+  border-radius: 11px;
+  background: rgb(var(--goal-tone-rgb) / 8%);
+  color: rgb(var(--goal-tone-rgb));
+}
+
+.training-goal-progress__status-icon svg { width: 19px; height: 19px; }
+.training-goal-progress__header > div:nth-child(2) { min-width: 0; }
+.training-goal-progress__header > div:nth-child(2) small {
+  display: block;
+  overflow: hidden;
+  color: rgb(var(--goal-tone-rgb) / 78%);
+  font-size: 10px;
+  letter-spacing: .7px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.training-goal-progress__header h2 {
+  margin: 4px 0 0;
+  color: #e7ebef;
+  font: 700 18px/1.25 Rajdhani, "Microsoft YaHei", sans-serif;
+}
+
+.training-goal-progress__summary {
+  display: grid;
+  min-width: 80px;
+  justify-items: end;
+  padding-left: 18px;
+  border-left: 1px solid rgb(207 218 228 / 8%);
+}
+.training-goal-progress__summary strong {
+  color: #eef2f5;
+  font: 700 22px/1 Rajdhani, sans-serif;
+}
+.training-goal-progress__summary strong i { margin: 0 3px; color: #69737e; font-size: 13px; font-style: normal; }
+.training-goal-progress__summary small { margin-top: 5px; color: #707b85; font-size: 9px; white-space: nowrap; }
+
+.training-goal-progress__targets {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 10px;
+  padding: 12px;
+}
+
+.training-goal-progress__targets article {
+  min-width: 0;
+  padding: 12px 13px 11px;
+  border: 1px solid rgb(202 214 224 / 7%);
+  border-radius: 10px;
+  background: rgb(1 7 12 / 34%);
+}
+.training-goal-progress__targets article[data-passed="true"] { border-color: rgb(var(--goal-tone-rgb) / 16%); }
+.training-goal-progress__targets article > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0;
+}
+.training-goal-progress__targets article > header span { overflow: hidden; color: #aeb8c0; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.training-goal-progress__targets article > header em {
+  flex: 0 0 auto;
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: rgb(211 121 112 / 8%);
+  color: #c9847e;
+  font-size: 8px;
+  font-style: normal;
+}
+.training-goal-progress__targets article[data-passed="true"] > header em {
+  background: rgb(105 205 162 / 8%);
+  color: #72caa5;
+}
+
+.training-goal-progress__value { display: flex; align-items: baseline; justify-content: space-between; gap: 14px; margin-top: 9px; }
+.training-goal-progress__value strong { color: #eef1f4; font: 700 21px/1 Rajdhani, sans-serif; }
+.training-goal-progress__value small { color: #717d87; font-size: 9px; white-space: nowrap; }
+.training-goal-progress__bar { height: 3px; margin-top: 11px; overflow: hidden; border-radius: 999px; background: rgb(213 222 230 / 7%); }
+.training-goal-progress__bar i { display: block; height: 100%; border-radius: inherit; background: rgb(var(--goal-tone-rgb)); transition: width .45s ease; }
+.training-goal-progress__targets footer { display: flex; justify-content: space-between; gap: 12px; margin-top: 7px; color: #646f79; font-size: 9px; }
+.training-goal-progress__targets footer b { color: #89939c; font-weight: 600; }
+
+@media (max-width: 720px) {
+  .training-goal-progress__header { min-height: 0; padding: 13px 14px; }
+  .training-goal-progress__status-icon { width: 34px; height: 34px; }
+  .training-goal-progress__header h2 { font-size: 16px; }
+  .training-goal-progress__summary { min-width: 58px; padding-left: 11px; }
+  .training-goal-progress__summary strong { font-size: 19px; }
+  .training-goal-progress__summary small { display: none; }
+  .training-goal-progress__targets { grid-template-columns: 1fr; padding: 10px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .training-goal-progress__bar i { transition: none; }
+}
