@@ -867,7 +867,6 @@ function CatalogScenePreview({ training, settings, large = false }: { training: 
     return (
       <div className={`catalog-scene-preview real grid-shot-settings-preview ${large ? "large" : ""}`}>
         <GridShotSettingsPreview settings={settings} />
-        <span>{tx("正式场景预览", "Live scene preview")}</span>
       </div>
     );
   }
