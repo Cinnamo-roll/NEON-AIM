@@ -8,8 +8,8 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.UUID;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -20,12 +20,6 @@ import tools.jackson.databind.ObjectMapper;
 @Service
 class TrainingCoachingTaskService implements TrainingCoachingTaskOperations {
 
-	private static final String GRID_SHOT_BENCHMARK_CONFIGURATION = "grid-shot:60s:medium";
-	private static final int GRID_SHOT_BENCHMARK_MODE_VERSION = 1;
-	private static final int GRID_SHOT_BENCHMARK_SCORING_VERSION = 1;
-	private static final Set<String> SUPPORTED_METRICS = Set.of(
-			"accuracy", "consistencyScore", "targetsPerMinute", "averageHitInterval",
-			"lastPhaseAccuracy", "maxCombo");
 	private static final TypeReference<List<TrainingAnalysisResult.Target>> TARGET_LIST = new TypeReference<>() { };
 	private static final TypeReference<Evaluation> EVALUATION_TYPE = new TypeReference<>() { };
 	private static final TypeReference<List<Evaluation>> ATTEMPT_LIST = new TypeReference<>() { };
@@ -34,25 +28,36 @@ class TrainingCoachingTaskService implements TrainingCoachingTaskOperations {
 	private final TrainingCareerAiAnalysisCallRepository analysisRepository;
 	private final ObjectMapper objectMapper;
 	private final Clock clock;
+	private final TrainingCoachingPolicyRegistry policyRegistry;
 
+	@Autowired
 	TrainingCoachingTaskService(TrainingCoachingTaskRepository taskRepository,
 			TrainingCareerAiAnalysisCallRepository analysisRepository,
-			ObjectMapper objectMapper, Clock clock) {
+			ObjectMapper objectMapper, Clock clock, TrainingCoachingPolicyRegistry policyRegistry) {
 		this.taskRepository = taskRepository;
 		this.analysisRepository = analysisRepository;
 		this.objectMapper = objectMapper;
 		this.clock = clock;
+		this.policyRegistry = policyRegistry;
+	}
+
+	TrainingCoachingTaskService(TrainingCoachingTaskRepository taskRepository,
+			TrainingCareerAiAnalysisCallRepository analysisRepository,
+			ObjectMapper objectMapper, Clock clock) {
+		this(taskRepository, analysisRepository, objectMapper, clock,
+				new TrainingCoachingPolicyRegistry(List.of(new GridShotTrainingCoachingPolicy())));
 	}
 
 	@Transactional
 	TaskView adopt(UUID userId, String trainingId, UUID analysisCallId) {
+		TrainingCoachingPolicy policy = policyRegistry.require(trainingId);
 		TrainingCareerAiAnalysisCall call = analysisRepository.findByIdAndUserId(analysisCallId, userId)
 				.orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "CAREER_ANALYSIS_NOT_FOUND",
 						"这份综合分析不存在"));
 		if (!trainingId.equals(call.trainingId()) || call.status() != TrainingCareerAiAnalysisCall.Status.READY) {
 			throw new ApiException(HttpStatus.CONFLICT, "CAREER_ANALYSIS_NOT_READY", "这份综合分析尚不能转为训练目标");
 		}
-		if (!call.sourceId().endsWith(":benchmark") || call.configurationCount() != 1) {
+		if (!policy.supportsAnalysisSource(call)) {
 			throw new ApiException(HttpStatus.CONFLICT, "CAREER_ANALYSIS_NOT_COMPARABLE",
 					"请先用基准训练记录生成综合分析");
 		}
@@ -61,15 +66,15 @@ class TrainingCoachingTaskService implements TrainingCoachingTaskOperations {
 				|| analysis.status() != TrainingAnalysisResult.Status.READY) {
 			throw new ApiException(HttpStatus.CONFLICT, "CAREER_ANALYSIS_NOT_READY", "这份综合分析尚不能转为训练目标");
 		}
-		validateTargets(analysis.nextAction().targets());
+		validateTargets(policy, analysis.nextAction().targets());
 		Instant activatedAt = clock.instant();
 		for (TrainingCoachingTask active : taskRepository.findByUserIdAndTrainingIdAndStatus(
 				userId, trainingId, TrainingCoachingTask.Status.ACTIVE)) {
 			active.cancel(activatedAt);
 		}
 		TrainingCoachingTask task = new TrainingCoachingTask(userId, trainingId, call.id(),
-				call.dataVersion(), GRID_SHOT_BENCHMARK_CONFIGURATION,
-				GRID_SHOT_BENCHMARK_MODE_VERSION, GRID_SHOT_BENCHMARK_SCORING_VERSION,
+				call.dataVersion(), policy.configurationKey(),
+				policy.modeVersion(), policy.scoringVersion(),
 				analysis.nextAction().title(), analysis.nextAction().description(),
 				writeJson(analysis.nextAction().targets()), activatedAt);
 		return view(taskRepository.save(task));
@@ -77,6 +82,7 @@ class TrainingCoachingTaskService implements TrainingCoachingTaskOperations {
 
 	@Transactional(readOnly = true)
 	TaskView latest(UUID userId, String trainingId) {
+		policyRegistry.require(trainingId);
 		TrainingCoachingTask task = taskRepository
 				.findFirstByUserIdAndTrainingIdAndStatusOrderByActivatedAtDesc(
 						userId, trainingId, TrainingCoachingTask.Status.ACTIVE)
@@ -144,9 +150,10 @@ class TrainingCoachingTaskService implements TrainingCoachingTaskOperations {
 				&& task.scoringVersion() == session.scoringVersion();
 	}
 
-	private static void validateTargets(List<TrainingAnalysisResult.Target> targets) {
+	private static void validateTargets(TrainingCoachingPolicy policy,
+			List<TrainingAnalysisResult.Target> targets) {
 		if (targets.isEmpty() || targets.size() > 3
-				|| targets.stream().anyMatch(target -> !SUPPORTED_METRICS.contains(target.metric()))
+				|| targets.stream().anyMatch(target -> !policy.supportedMetrics().contains(target.metric()))
 				|| targets.stream().map(TrainingAnalysisResult.Target::metric).distinct().count() != targets.size()) {
 			throw new ApiException(HttpStatus.CONFLICT, "CAREER_TARGET_UNSUPPORTED",
 					"这份分析包含暂时无法自动验收的目标，请重新生成综合分析");

@@ -20,12 +20,12 @@ import tools.jackson.databind.ObjectMapper;
 class TrainingCareerAiAnalysisService {
 
 	private static final Logger LOGGER = LoggerFactory.getLogger(TrainingCareerAiAnalysisService.class);
-	private static final String PROMPT_VERSION = "grid-shot-career-v2";
-	private static final String ENGINE_VERSION = "grid-shot-career-ai-v2";
 	private static final Duration STALE_PENDING_AFTER = Duration.ofMinutes(2);
 
 	private final TrainingCareerAnalysisOperations trainingOperations;
 	private final TrainingAnalysisProviderRegistry providerRegistry;
+	private final AiProviderSettingsService providerSettings;
+	private final TrainingAiAnalysisStrategyRegistry strategyRegistry;
 	private final TrainingAnalysisGateway gateway;
 	private final TrainingCareerAiAnalysisCallRepository callRepository;
 	private final ObjectMapper objectMapper;
@@ -33,11 +33,15 @@ class TrainingCareerAiAnalysisService {
 	private final Clock clock;
 
 	TrainingCareerAiAnalysisService(TrainingCareerAnalysisOperations trainingOperations,
-			TrainingAnalysisProviderRegistry providerRegistry, TrainingAnalysisGateway gateway,
+			TrainingAnalysisProviderRegistry providerRegistry, AiProviderSettingsService providerSettings,
+			TrainingAnalysisGateway gateway,
 			TrainingCareerAiAnalysisCallRepository callRepository, ObjectMapper objectMapper,
+			TrainingAiAnalysisStrategyRegistry strategyRegistry,
 			@Qualifier("trainingAiExecutor") Executor executor, Clock clock) {
 		this.trainingOperations = trainingOperations;
 		this.providerRegistry = providerRegistry;
+		this.providerSettings = providerSettings;
+		this.strategyRegistry = strategyRegistry;
 		this.gateway = gateway;
 		this.callRepository = callRepository;
 		this.objectMapper = objectMapper;
@@ -45,7 +49,10 @@ class TrainingCareerAiAnalysisService {
 		this.clock = clock;
 	}
 
-	JobView trigger(UUID userId, String trainingId, String providerName, String apiKey, String model) {
+	JobView trigger(UUID userId, String trainingId) {
+		TrainingAiAnalysisStrategy strategy = strategyRegistry.require(trainingId);
+		TrainingAiAnalysisStrategy.PromptSpec prompt = strategy.prompt(
+				com.neonaim.training.api.TrainingAnalysisSnapshot.Scope.CAREER);
 		TrainingCareerAnalysisOperations.CareerContext context =
 				trainingOperations.loadCareerAnalysisContext(userId, trainingId);
 		TrainingCareerAiAnalysisCall pending = callRepository
@@ -61,14 +68,16 @@ class TrainingCareerAiAnalysisService {
 			callRepository.save(pending);
 		}
 
-		TrainingAnalysisProvider provider = providerRegistry.create(providerName, apiKey, model);
+		AiProviderSettingsService.Credentials credentials = providerSettings.requireCredentials();
+		TrainingAnalysisProvider provider = providerRegistry.create(
+				credentials.provider(), credentials.apiKey(), credentials.model());
 		TrainingCareerAiAnalysisCall call = callRepository.saveAndFlush(new TrainingCareerAiAnalysisCall(
 				userId, context.anchorSessionId(), trainingId, context.snapshot().sourceId(),
-				context.snapshot().dataVersion(), provider.providerId(), model, PROMPT_VERSION,
+				context.snapshot().dataVersion(), provider.providerId(), credentials.model(), prompt.promptVersion(),
 				context.confidence().name(), context.sampleSize(), context.comparableSampleSize(),
 				context.configurationCount(), clock.instant()));
 		try {
-			executor.execute(() -> analyze(call.id(), userId, trainingId, providerName, apiKey, model));
+			executor.execute(() -> analyze(call.id(), userId, trainingId, credentials));
 		}
 		catch (TaskRejectedException exception) {
 			call.fail("AI_QUEUE_FULL", "AI 分析任务较多，请稍后重试", clock.instant());
@@ -78,6 +87,7 @@ class TrainingCareerAiAnalysisService {
 	}
 
 	JobView latest(UUID userId, String trainingId) {
+		strategyRegistry.require(trainingId);
 		TrainingCareerAnalysisOperations.CareerContext context =
 				trainingOperations.loadCareerAnalysisContext(userId, trainingId);
 		TrainingCareerAiAnalysisCall latest = callRepository
@@ -94,11 +104,14 @@ class TrainingCareerAiAnalysisService {
 		return view(latest, readResult(latest.resultJson()), stale);
 	}
 
-	private void analyze(UUID callId, UUID userId, String trainingId, String providerName,
-			String apiKey, String model) {
+	private void analyze(UUID callId, UUID userId, String trainingId,
+			AiProviderSettingsService.Credentials credentials) {
 		TrainingCareerAiAnalysisCall call = callRepository.findById(callId).orElse(null);
 		if (call == null || call.status() != TrainingCareerAiAnalysisCall.Status.PENDING) return;
 		try {
+			TrainingAiAnalysisStrategy strategy = strategyRegistry.require(trainingId);
+			TrainingAiAnalysisStrategy.PromptSpec prompt = strategy.prompt(
+					com.neonaim.training.api.TrainingAnalysisSnapshot.Scope.CAREER);
 			TrainingCareerAnalysisOperations.CareerContext context =
 					trainingOperations.loadCareerAnalysisContext(userId, trainingId);
 			if (!call.dataVersion().equals(context.snapshot().dataVersion())) {
@@ -106,9 +119,10 @@ class TrainingCareerAiAnalysisService {
 				callRepository.save(call);
 				return;
 			}
-			TrainingAnalysisProvider provider = providerRegistry.create(providerName, apiKey, model);
+			TrainingAnalysisProvider provider = providerRegistry.create(
+					credentials.provider(), credentials.apiKey(), credentials.model());
 			TrainingAnalysisGateway.AnalysisOutcome outcome = gateway.analyze(userId.toString(),
-					context.snapshot(), PROMPT_VERSION, provider);
+					context.snapshot(), strategy, provider);
 			if (outcome.status() == TrainingAnalysisGateway.Status.BUDGET_EXHAUSTED) {
 				call.budgetExhausted(clock.instant());
 				callRepository.save(call);
@@ -119,7 +133,7 @@ class TrainingCareerAiAnalysisService {
 				callRepository.save(call);
 				return;
 			}
-			TrainingAnalysisResult result = toTrainingResult(outcome.providerId(), outcome.result());
+			TrainingAnalysisResult result = toTrainingResult(outcome.providerId(), outcome.result(), prompt);
 			call.complete(outcome.result().usage(), outcome.cacheHit(), writeResult(result), clock.instant());
 			callRepository.save(call);
 		}
@@ -135,7 +149,8 @@ class TrainingCareerAiAnalysisService {
 	}
 
 	private TrainingAnalysisResult toTrainingResult(String providerId,
-			TrainingAnalysisProvider.AnalysisResult providerResult) {
+			TrainingAnalysisProvider.AnalysisResult providerResult,
+			TrainingAiAnalysisStrategy.PromptSpec prompt) {
 		List<TrainingAnalysisResult.Finding> findings = providerResult.findings().stream()
 				.map(finding -> new TrainingAnalysisResult.Finding(finding.code(),
 						TrainingAnalysisResult.Severity.valueOf(finding.severity().name()),
@@ -147,8 +162,8 @@ class TrainingCareerAiAnalysisService {
 						target.value(), target.unit()))
 				.toList();
 		return new TrainingAnalysisResult(TrainingAnalysisResult.CURRENT_SCHEMA_VERSION,
-				TrainingAnalysisResult.Status.READY, TrainingAnalysisResult.Source.AI, ENGINE_VERSION,
-				providerId, providerResult.model(), PROMPT_VERSION, providerResult.headline(),
+				TrainingAnalysisResult.Status.READY, TrainingAnalysisResult.Source.AI, prompt.engineVersion(),
+				providerId, providerResult.model(), prompt.promptVersion(), providerResult.headline(),
 				providerResult.summary(), findings,
 				new TrainingAnalysisResult.NextAction(providerResult.nextAction().title(),
 						providerResult.nextAction().description(), targets),

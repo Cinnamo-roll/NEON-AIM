@@ -16,6 +16,7 @@ import org.junit.jupiter.api.Test;
 class TrainingAnalysisGatewayTests {
 
 	private static final Clock CLOCK = Clock.fixed(Instant.parse("2026-07-14T04:00:00Z"), ZoneOffset.UTC);
+	private static final TrainingAiAnalysisStrategy STRATEGY = new GridShotTrainingAiAnalysisStrategy();
 
 	@Test
 	void cachedAnalysisDoesNotCallTheProviderOrReserveTokensAgain() {
@@ -24,8 +25,8 @@ class TrainingAnalysisGatewayTests {
 		TrainingAnalysisGateway gateway = gateway(List.of(provider), costGuard);
 		TrainingAnalysisSnapshot snapshot = snapshot("session-1", "data-v1");
 
-		TrainingAnalysisGateway.AnalysisOutcome first = gateway.analyze("player-1", snapshot, "session-v1");
-		TrainingAnalysisGateway.AnalysisOutcome cached = gateway.analyze("player-1", snapshot, "session-v1");
+		TrainingAnalysisGateway.AnalysisOutcome first = gateway.analyze("player-1", snapshot, STRATEGY);
+		TrainingAnalysisGateway.AnalysisOutcome cached = gateway.analyze("player-1", snapshot, STRATEGY);
 
 		assertThat(first.status()).isEqualTo(TrainingAnalysisGateway.Status.COMPLETED);
 		assertThat(first.cacheHit()).isFalse();
@@ -41,9 +42,9 @@ class TrainingAnalysisGatewayTests {
 		TrainingAnalysisCostGuard costGuard = new TrainingAnalysisCostGuard(CLOCK, 1_320);
 		TrainingAnalysisGateway gateway = gateway(List.of(provider), costGuard);
 
-		gateway.analyze("player-1", snapshot("session-1", "data-v1"), "session-v1");
+		gateway.analyze("player-1", snapshot("session-1", "data-v1"), STRATEGY);
 		TrainingAnalysisGateway.AnalysisOutcome rejected = gateway.analyze("player-1",
-				snapshot("session-2", "data-v2"), "session-v1");
+				snapshot("session-2", "data-v2"), STRATEGY);
 
 		assertThat(rejected.status()).isEqualTo(TrainingAnalysisGateway.Status.BUDGET_EXHAUSTED);
 		assertThat(rejected.result()).isNull();
@@ -56,7 +57,7 @@ class TrainingAnalysisGatewayTests {
 		TrainingAnalysisGateway gateway = gateway(List.of(provider),
 				new TrainingAnalysisCostGuard(CLOCK, 10_000));
 
-		gateway.analyze("player-1", snapshot("session-1", "data-v1"), "session-v1");
+		gateway.analyze("player-1", snapshot("session-1", "data-v1"), STRATEGY);
 
 		TrainingAnalysisProvider.AnalysisRequest request = provider.lastRequest;
 		assertThat(request.budget().maxInputTokens()).isEqualTo(900);
@@ -73,8 +74,8 @@ class TrainingAnalysisGatewayTests {
 				new TrainingAnalysisCostGuard(CLOCK, 10_000));
 		TrainingAnalysisSnapshot snapshot = careerSnapshot();
 
-		TrainingAnalysisGateway.AnalysisOutcome first = gateway.analyze("player-1", snapshot, "career-v1");
-		TrainingAnalysisGateway.AnalysisOutcome second = gateway.analyze("player-1", snapshot, "career-v1");
+		TrainingAnalysisGateway.AnalysisOutcome first = gateway.analyze("player-1", snapshot, STRATEGY);
+		TrainingAnalysisGateway.AnalysisOutcome second = gateway.analyze("player-1", snapshot, STRATEGY);
 
 		assertThat(first.cacheHit()).isFalse();
 		assertThat(second.cacheHit()).isTrue();
@@ -97,7 +98,7 @@ class TrainingAnalysisGatewayTests {
 				base.sourceId(), base.dataVersion(), base.trainingId(), base.configurationKey(), base.sampleSize(),
 				base.summaryMetrics(), windows, base.signals(), base.comparison(), base.integrity());
 
-		assertThatThrownBy(() -> gateway.analyze("player-1", oversized, "session-v1"))
+		assertThatThrownBy(() -> gateway.analyze("player-1", oversized, STRATEGY))
 				.isInstanceOf(IllegalArgumentException.class)
 				.hasMessageContaining("too many windows");
 		assertThat(provider.calls).isZero();
@@ -110,7 +111,7 @@ class TrainingAnalysisGatewayTests {
 		TrainingAnalysisGateway gateway = gateway(List.of(), costGuard);
 
 		TrainingAnalysisGateway.AnalysisOutcome outcome = gateway.analyze("player-1",
-				snapshot("session-1", "data-v1"), "session-v1");
+				snapshot("session-1", "data-v1"), STRATEGY);
 
 		assertThat(outcome.status()).isEqualTo(TrainingAnalysisGateway.Status.NO_PROVIDER);
 		assertThat(costGuard.remainingTokens("player-1")).isEqualTo(1_320);
@@ -142,7 +143,7 @@ class TrainingAnalysisGatewayTests {
 		TrainingAnalysisCostGuard costGuard = new TrainingAnalysisCostGuard(CLOCK, 1_320);
 		TrainingAnalysisGateway gateway = gateway(List.of(provider), costGuard);
 
-		assertThatThrownBy(() -> gateway.analyze("player-1", snapshot("session-1", "data-v1"), "session-v1"))
+		assertThatThrownBy(() -> gateway.analyze("player-1", snapshot("session-1", "data-v1"), STRATEGY))
 				.isInstanceOf(ModelProviderException.class)
 				.hasMessageContaining("AI");
 		assertThat(costGuard.remainingTokens("player-1")).isEqualTo(1_040);

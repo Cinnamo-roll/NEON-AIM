@@ -17,6 +17,10 @@ import tools.jackson.databind.ObjectMapper;
 
 class OpenAiCompatibleChatProviderTests {
 
+	private static TrainingAiAnalysisStrategy.PromptSpec prompt() {
+		return new GridShotTrainingAiAnalysisStrategy().prompt(TrainingAnalysisSnapshot.Scope.SESSION);
+	}
+
 	@Test
 	void deepSeekUsesJsonModeWithoutSendingRawEventsOrTheApiKey() throws Exception {
 		CapturedCall call = execute(OpenAiCompatibleChatProvider.Profile.DEEPSEEK);
@@ -25,7 +29,7 @@ class OpenAiCompatibleChatProviderTests {
 		assertThat(call.authorization()).isEqualTo("Bearer provider-test-key");
 		assertThat(call.body()).contains("\"response_format\":{\"type\":\"json_object\"}",
 				"\"thinking\":{\"type\":\"disabled\"}", "\"max_tokens\":260", "\"temperature\":0.1",
-				"先判断数据里是否有值得保留的优势")
+				"NEON AIM's Grid Shot coach")
 				.doesNotContain("\"events\":", "provider-test-key");
 		assertThat(call.testBody()).contains("\"max_tokens\":16", "{\\\"ok\\\":true}",
 				"\"thinking\":{\"type\":\"disabled\"}")
@@ -67,7 +71,7 @@ class OpenAiCompatibleChatProviderTests {
 
 			ModelProviderException exception = catchThrowableOfType(ModelProviderException.class, () -> provider.analyze(
 					new TrainingAnalysisProvider.AnalysisRequest(snapshot(),
-							new TrainingAnalysisPolicy.TokenBudget(900, 420), "grid-shot-session-v2")));
+							new TrainingAnalysisPolicy.TokenBudget(900, 420), prompt())));
 
 			assertThat(exception.code()).isEqualTo("AI_RESPONSE_INCOMPLETE");
 			assertThat(exception.usage()).isEqualTo(new TrainingAnalysisProvider.TokenUsage(318, 420));
@@ -113,7 +117,7 @@ class OpenAiCompatibleChatProviderTests {
 
 			TrainingAnalysisProvider.AnalysisResult result = provider.analyze(
 					new TrainingAnalysisProvider.AnalysisRequest(snapshot(),
-							new TrainingAnalysisPolicy.TokenBudget(900, 420), "grid-shot-session-v3"));
+							new TrainingAnalysisPolicy.TokenBudget(900, 420), prompt()));
 
 			assertThat(result.findings().getFirst().code()).isEqualTo("RHYTHM_INSTABILITY");
 			assertThat(result.findings().getFirst().severity())
@@ -172,7 +176,7 @@ class OpenAiCompatibleChatProviderTests {
 							? "deepseek-v4-flash" : "qwen-flash");
 			TrainingAnalysisProvider.AnalysisResult result = provider.analyze(
 					new TrainingAnalysisProvider.AnalysisRequest(snapshot(),
-							new TrainingAnalysisPolicy.TokenBudget(900, 260), "grid-shot-session-v1"));
+							new TrainingAnalysisPolicy.TokenBudget(900, 260), prompt()));
 			String analysisBody = requestBody.get();
 			TrainingAnalysisProvider.ConnectionResult connection = provider.testConnection();
 			assertThat(connection.usage().totalTokens()).isEqualTo(410);

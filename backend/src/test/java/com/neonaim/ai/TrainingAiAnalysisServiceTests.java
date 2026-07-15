@@ -28,9 +28,9 @@ class TrainingAiAnalysisServiceTests {
 	void repeatedRequestUsesCacheAndRecordsZeroTokensForTheSecondCall() {
 		Fixture fixture = fixture(false);
 
-		fixture.service.trigger(fixture.userId, fixture.sessionId, "openai", "sk-test-user-key-value", "gpt-4o-mini");
+		fixture.service.trigger(fixture.userId, fixture.sessionId);
 		TrainingAiAnalysisService.JobView first = fixture.service.latest(fixture.userId, fixture.sessionId);
-		fixture.service.trigger(fixture.userId, fixture.sessionId, "openai", "sk-test-user-key-value", "gpt-4o-mini");
+		fixture.service.trigger(fixture.userId, fixture.sessionId);
 		TrainingAiAnalysisService.JobView second = fixture.service.latest(fixture.userId, fixture.sessionId);
 
 		assertThat(first.status()).isEqualTo(TrainingAiAnalysisService.JobStatus.READY);
@@ -60,7 +60,7 @@ class TrainingAiAnalysisServiceTests {
 	void providerFailureKeepsTheRuleAnalysisAvailable() {
 		Fixture fixture = fixture(true);
 
-		fixture.service.trigger(fixture.userId, fixture.sessionId, "openai", "sk-test-user-key-value", "gpt-4o-mini");
+		fixture.service.trigger(fixture.userId, fixture.sessionId);
 		TrainingAiAnalysisService.JobView failed = fixture.service.latest(fixture.userId, fixture.sessionId);
 
 		assertThat(failed.status()).isEqualTo(TrainingAiAnalysisService.JobStatus.FAILED);
@@ -73,7 +73,7 @@ class TrainingAiAnalysisServiceTests {
 	void rejectedAiResultStillRecordsTheTokensAlreadySpent() {
 		Fixture fixture = fixture(false, true);
 
-		fixture.service.trigger(fixture.userId, fixture.sessionId, "openai", "sk-test-user-key-value", "gpt-4o-mini");
+		fixture.service.trigger(fixture.userId, fixture.sessionId);
 		TrainingAiAnalysisService.JobView failed = fixture.service.latest(fixture.userId, fixture.sessionId);
 
 		assertThat(failed.status()).isEqualTo(TrainingAiAnalysisService.JobStatus.FAILED);
@@ -141,10 +141,13 @@ class TrainingAiAnalysisServiceTests {
 		};
 		TrainingAnalysisProviderRegistry providerRegistry = mock(TrainingAnalysisProviderRegistry.class);
 		when(providerRegistry.create(anyString(), anyString(), anyString())).thenReturn(provider);
+		AiProviderSettingsService providerSettings = mock(AiProviderSettingsService.class);
+		when(providerSettings.requireCredentials()).thenReturn(new AiProviderSettingsService.Credentials(
+				"openai", "sk-test-user-key-value", "gpt-4o-mini"));
 		TrainingAnalysisGateway gateway = new TrainingAnalysisGateway(List.of(), new TrainingAnalysisPolicy(),
 				new InMemoryTrainingAnalysisCache(20), new TrainingAnalysisCostGuard(CLOCK, 10_000));
 		TrainingAiAnalysisService service = new TrainingAiAnalysisService(operations, repository, gateway,
-				providerRegistry, Runnable::run, CLOCK);
+				providerRegistry, providerSettings, Runnable::run, CLOCK);
 		return new Fixture(service, userId, sessionId, providerCalls);
 	}
 

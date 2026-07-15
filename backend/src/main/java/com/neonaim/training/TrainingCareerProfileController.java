@@ -16,15 +16,15 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/training/career/{trainingId}/profile")
 class TrainingCareerProfileController {
 
-	private final TrainingCareerProfileService service;
+	private final TrainingCareerProfileRegistry registry;
 
-	TrainingCareerProfileController(TrainingCareerProfileService service) {
-		this.service = service;
+	TrainingCareerProfileController(TrainingCareerProfileRegistry registry) {
+		this.registry = registry;
 	}
 
 	@GetMapping
-	ApiResponse<TrainingCareerProfileService.ProfileView> profile(@AuthenticationPrincipal Jwt jwt,
-			@PathVariable @Pattern(regexp = "grid-shot") String trainingId) {
-		return ApiResponse.success(service.profile(UUID.fromString(jwt.getSubject()), trainingId));
+	ApiResponse<?> profile(@AuthenticationPrincipal Jwt jwt,
+			@PathVariable @Pattern(regexp = "[a-z0-9][a-z0-9-]{0,63}") String trainingId) {
+		return ApiResponse.success(registry.profile(UUID.fromString(jwt.getSubject()), trainingId));
 	}
 }

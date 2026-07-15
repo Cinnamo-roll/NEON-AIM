@@ -2,12 +2,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { authenticatedRequest } from "../../features/auth/authApi";
 import type { GridShotEvent } from "../modes/gridShot/gridShotAnalytics";
 import { DEFAULT_GRID_SHOT_SETTINGS } from "../modes/gridShot/gridShotConfig";
+import { saveGridShotTrainingSession } from "../modes/gridShot/gridShotTrainingSessionService";
 import { createEmptyGridShotStats, createGridShotRecord } from "../scoring/gridShotSession";
-import { readHistory } from "./trainingStorage";
 import {
-  pendingTrainingSessionCount,
-  saveGridShotTrainingSession,
-  syncPendingTrainingSessions,
+  clearRetiredLocalTrainingData,
+  saveTrainingSessionSubmission,
+  type TrainingSessionSubmission,
 } from "./trainingSessionService";
 
 vi.mock("../../features/auth/authApi", () => ({ authenticatedRequest: vi.fn() }));
@@ -65,39 +65,74 @@ function record() {
   return createGridShotRecord(stats, 60);
 }
 
-describe("training session local-first persistence", () => {
+function futureProjectSubmission(): TrainingSessionSubmission<
+  { sensitivity: number },
+  { samples: Array<{ x: number; y: number }> },
+  { schemaVersion: number; evidence: string[] }
+> {
+  return {
+    clientSessionId: "generic-session",
+    trainingId: "future-project",
+    modeVersion: 1,
+    scoringVersion: 1,
+    configurationKey: "future-project:practice",
+    sessionType: "practice",
+    startedAt: "2026-07-15T00:00:00.000Z",
+    completedAt: "2026-07-15T00:00:30.000Z",
+    durationMs: 30_000,
+    configuration: { sensitivity: 1 },
+    summary: { score: 1, hits: 0, misses: 0, accuracy: 0, targetsPerMinute: 0, averageHitInterval: 0, consistencyScore: 0, maxCombo: 0, grade: "-" },
+    detail: { samples: [{ x: 1, y: 2 }] },
+    analysisSnapshot: { schemaVersion: 1, evidence: ["future"] },
+    integrity: { passed: true, errors: [] },
+  };
+}
+
+describe("cloud-only training session persistence", () => {
   beforeEach(() => {
     vi.stubGlobal("localStorage", memoryStorage());
     requestMock.mockReset();
   });
 
-  it("keeps guest results locally and queues the cloud payload", async () => {
+  it("does not persist or upload guest Grid Shot results", async () => {
     const result = await saveGridShotTrainingSession(record(), DEFAULT_GRID_SHOT_SETTINGS, "practice", false);
 
-    expect(result.status).toBe("saved-local");
-    expect(readHistory()).toHaveLength(1);
-    expect(readHistory()[0].configuration).toEqual({ targetSize: "medium", activeTargetCount: 3 });
-    expect(pendingTrainingSessionCount()).toBe(1);
+    expect(result.status).toBe("login-required");
     expect(requestMock).not.toHaveBeenCalled();
+    expect(localStorage.length).toBe(0);
   });
 
-  it("drops the pre-career history and upload queue during the one-time storage reset", () => {
-    localStorage.setItem("neon-grid-shot-history-v1", JSON.stringify([record()]));
-    localStorage.setItem("neon-training-upload-queue-v1", JSON.stringify([{ clientSessionId: "legacy" }]));
+  it("keeps the generic API independent from project detail types without queueing guest data", async () => {
+    const result = await saveTrainingSessionSubmission(futureProjectSubmission(), false);
 
-    expect(readHistory()).toEqual([]);
-    expect(pendingTrainingSessionCount()).toBe(0);
+    expect(result.status).toBe("login-required");
+    expect(requestMock).not.toHaveBeenCalled();
+    expect(localStorage.length).toBe(0);
+  });
+
+  it("purges retired history and upload queues without touching unrelated settings", () => {
+    localStorage.setItem("neon-grid-shot-history-v1", "legacy");
+    localStorage.setItem("neon-grid-shot-history-v2", "current-local-history");
+    localStorage.setItem("neon-training-upload-queue-v1", "legacy-queue");
+    localStorage.setItem("neon-training-upload-queue-v2", "current-queue");
+    localStorage.setItem("neon-settings", "keep-me");
+
+    clearRetiredLocalTrainingData();
+
     expect(localStorage.getItem("neon-grid-shot-history-v1")).toBeNull();
+    expect(localStorage.getItem("neon-grid-shot-history-v2")).toBeNull();
     expect(localStorage.getItem("neon-training-upload-queue-v1")).toBeNull();
+    expect(localStorage.getItem("neon-training-upload-queue-v2")).toBeNull();
+    expect(localStorage.getItem("neon-settings")).toBe("keep-me");
   });
 
-  it("uploads authenticated sessions with detailed segments and a compact AI snapshot", async () => {
+  it("uploads authenticated sessions with project-owned detail and analysis data", async () => {
     requestMock.mockResolvedValue({ data: { summary: { id: "server-session" } }, message: null });
     const result = await saveGridShotTrainingSession(record(), DEFAULT_GRID_SHOT_SETTINGS, "benchmark", true);
 
     expect(result.status).toBe("saved-cloud");
     expect(result.serverSessionId).toBe("server-session");
-    expect(pendingTrainingSessionCount()).toBe(0);
+    expect(localStorage.length).toBe(0);
     const [, init] = requestMock.mock.calls[0];
     const payload = JSON.parse(String(init?.body)) as {
       sessionType: string;
@@ -110,25 +145,12 @@ describe("training session local-first persistence", () => {
     expect(payload.sessionType).toBe("benchmark");
   });
 
-  it("retains failed uploads and synchronizes them after the connection recovers", async () => {
+  it("reports a failed cloud save without creating a cross-account retry queue", async () => {
     requestMock.mockRejectedValueOnce(new TypeError("Failed to fetch"));
-    const saved = await saveGridShotTrainingSession(record(), DEFAULT_GRID_SHOT_SETTINGS, "benchmark", true);
-    expect(saved.status).toBe("pending-sync");
-    expect(pendingTrainingSessionCount()).toBe(1);
 
-    requestMock.mockResolvedValue({ data: { summary: { id: "server-session" } }, message: null });
-    const sync = await syncPendingTrainingSessions();
-    expect(sync.syncedSessionIds).toEqual(["session-save-test"]);
-    expect(sync.serverSessionIds).toEqual({ "session-save-test": "server-session" });
-    expect(sync.remaining).toBe(0);
-  });
+    const result = await saveGridShotTrainingSession(record(), DEFAULT_GRID_SHOT_SETTINGS, "benchmark", true);
 
-  it("deduplicates local history and pending uploads by client session ID", async () => {
-    const sameRecord = record();
-    await saveGridShotTrainingSession(sameRecord, DEFAULT_GRID_SHOT_SETTINGS, "practice", false);
-    await saveGridShotTrainingSession(sameRecord, DEFAULT_GRID_SHOT_SETTINGS, "practice", false);
-
-    expect(readHistory()).toHaveLength(1);
-    expect(pendingTrainingSessionCount()).toBe(1);
+    expect(result.status).toBe("failed");
+    expect(localStorage.length).toBe(0);
   });
 });

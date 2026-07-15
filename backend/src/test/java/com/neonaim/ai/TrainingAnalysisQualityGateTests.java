@@ -14,7 +14,8 @@ import org.junit.jupiter.params.provider.MethodSource;
 
 class TrainingAnalysisQualityGateTests {
 
-	private final TrainingAnalysisQualityGate gate = new TrainingAnalysisQualityGate();
+	private final TrainingAnalysisQualityGate gate = new TrainingAnalysisQualityGate(
+			new GridShotTrainingAiAnalysisStrategy());
 
 	@ParameterizedTest(name = "accepts grounded scenario {0}")
 	@MethodSource("groundedScenarios")

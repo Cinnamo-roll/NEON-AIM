@@ -33,8 +33,6 @@ public class SecurityConfiguration {
 						.requestMatchers(HttpMethod.POST, "/api/auth/register", "/api/auth/login", "/api/auth/refresh", "/api/auth/logout").permitAll()
 						.requestMatchers("/actuator/health/**", "/v3/api-docs/**", "/swagger-ui/**").permitAll()
 						.requestMatchers("/api/admin/**").hasRole("ADMIN")
-						.requestMatchers("/api/training/sessions/*/ai-analysis").hasRole("ADMIN")
-						.requestMatchers("/api/training/career/*/ai-analysis").hasRole("ADMIN")
 						.requestMatchers("/api/training/career/*/coaching-task").hasRole("ADMIN")
 						.anyRequest().authenticated())
 				.oauth2ResourceServer(oauth -> oauth.jwt(jwt -> jwt.jwtAuthenticationConverter(jwtAuthenticationConverter())))

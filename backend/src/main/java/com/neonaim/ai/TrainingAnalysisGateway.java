@@ -26,26 +26,30 @@ public final class TrainingAnalysisGateway {
 		this.costGuard = Objects.requireNonNull(costGuard, "costGuard");
 	}
 
-	public AnalysisOutcome analyze(String ownerKey, TrainingAnalysisSnapshot snapshot, String promptVersion) {
+	public AnalysisOutcome analyze(String ownerKey, TrainingAnalysisSnapshot snapshot,
+			TrainingAiAnalysisStrategy strategy) {
 		if (providers.isEmpty()) {
 			return new AnalysisOutcome(Status.NO_PROVIDER, null, false, null);
 		}
-		return analyze(ownerKey, snapshot, promptVersion, providers.getFirst());
+		return analyze(ownerKey, snapshot, strategy, providers.getFirst());
 	}
 
-	public AnalysisOutcome analyze(String ownerKey, TrainingAnalysisSnapshot snapshot, String promptVersion,
+	public AnalysisOutcome analyze(String ownerKey, TrainingAnalysisSnapshot snapshot,
+			TrainingAiAnalysisStrategy strategy,
 			TrainingAnalysisProvider provider) {
 		policy.validate(Objects.requireNonNull(snapshot, "snapshot"));
-		if (promptVersion == null || promptVersion.isBlank()) {
-			throw new IllegalArgumentException("promptVersion must not be blank");
+		Objects.requireNonNull(strategy, "strategy");
+		if (!snapshot.trainingId().equals(strategy.trainingId())) {
+			throw new IllegalArgumentException("AI strategy does not match the training snapshot");
 		}
+		TrainingAiAnalysisStrategy.PromptSpec prompt = strategy.prompt(snapshot.scope());
 		Objects.requireNonNull(provider, "provider");
 		String providerId = provider.providerId();
 		if (providerId == null || providerId.isBlank()) {
 			throw new IllegalStateException("providerId must not be blank");
 		}
 		TrainingAnalysisCache.CacheKey cacheKey = new TrainingAnalysisCache.CacheKey(snapshot.scope(),
-				snapshot.sourceId(), snapshot.dataVersion(), promptVersion, providerId);
+				snapshot.sourceId(), snapshot.dataVersion(), prompt.promptVersion(), providerId);
 		Optional<TrainingAnalysisProvider.AnalysisResult> cached = cache.find(cacheKey);
 		if (cached.isPresent()) {
 			return new AnalysisOutcome(Status.COMPLETED, cached.get(), true, providerId);
@@ -59,10 +63,10 @@ public final class TrainingAnalysisGateway {
 		}
 		try {
 			TrainingAnalysisProvider.AnalysisResult result = provider.analyze(
-					new TrainingAnalysisProvider.AnalysisRequest(snapshot, budget, promptVersion));
+					new TrainingAnalysisProvider.AnalysisRequest(snapshot, budget, prompt));
 			costGuard.settle(reservation.get(), result.usage());
 			try {
-				policy.validateResult(snapshot, result, budget);
+				policy.validateResult(snapshot, result, budget, strategy);
 			}
 			catch (RuntimeException rejected) {
 				throw new ModelProviderException("AI_RESPONSE_REJECTED",

@@ -11,7 +11,7 @@ import {
   type GridShotTargetSize,
   type GridShotSessionType,
 } from "../modes/gridShot/gridShotConfig";
-import type { GridShotEvent } from "../modes/gridShot/gridShotAnalytics";
+import { analyzeGridShotEvents, type GridShotEvent } from "../modes/gridShot/gridShotAnalytics";
 import type {
   TrainingSessionDetailResponse,
   TrainingSessionSummaryResponse,
@@ -22,6 +22,8 @@ export type GridShotCareerSessionSource = "cloud" | "local";
 
 export interface GridShotCareerSession {
   key: string;
+  projectId: "grid-shot";
+  trainingId: "grid-shot";
   source: GridShotCareerSessionSource;
   serverId?: string;
   clientSessionId: string;
@@ -125,6 +127,8 @@ export function localGridShotCareerSession(record: GridShotHistoryRecord): GridS
   const sessionType = record.sessionType ?? (isGridShotBenchmarkConfiguration(configurationKey, 1, 1) ? "benchmark" : "practice");
   return {
     key: `local:${clientSessionId}`,
+    projectId: "grid-shot",
+    trainingId: "grid-shot",
     source: "local",
     clientSessionId,
     completedAt,
@@ -155,6 +159,8 @@ export function cloudGridShotCareerSession(
   const sessionType = summary.sessionType ?? (isGridShotBenchmarkConfiguration(summary.configurationKey, summary.modeVersion, summary.scoringVersion) ? "benchmark" : "practice");
   return {
     key: `cloud:${summary.id}`,
+    projectId: "grid-shot",
+    trainingId: "grid-shot",
     source: "cloud",
     serverId: summary.id,
     clientSessionId: summary.clientSessionId,
@@ -260,7 +266,11 @@ export function localGridShotCareerDetail(
 
 export function cloudGridShotCareerDetail(
   session: GridShotCareerSession,
-  response: TrainingSessionDetailResponse,
+  response: TrainingSessionDetailResponse<
+    Record<string, string | number>,
+    { segments: GridShotDetailSegment[]; events: GridShotEvent[] },
+    TrainingSessionAnalysisSnapshot
+  >,
 ): GridShotCareerDetail {
   return {
     session,
@@ -270,5 +280,73 @@ export function cloudGridShotCareerDetail(
     analysisSnapshot: response.analysisSnapshot,
     analysis: response.analysis,
     integrityErrors: response.integrityErrors,
+  };
+}
+
+function detailTargetSize(detail: GridShotCareerDetail): GridShotTargetSize {
+  const value = detail.configuration.targetSize;
+  return value === "small" || value === "large" ? value : "medium";
+}
+
+export function gridShotCareerDetailToHistoryRecord(
+  detail: GridShotCareerDetail,
+): GridShotHistoryRecord {
+  const analytics = analyzeGridShotEvents(detail.events, {
+    sessionDurationMs: detail.session.durationMs,
+    activeDurationMs: detail.session.durationMs,
+  });
+  const integrityPassed = detail.session.integrityStatus === "VALID"
+    && detail.analysisSnapshot.integrity.passed;
+  return {
+    id: detail.session.clientSessionId,
+    sessionId: detail.session.clientSessionId,
+    createdAt: detail.session.completedAt,
+    duration: detail.session.durationMs / 1_000,
+    sessionDurationMs: detail.session.durationMs,
+    sessionType: detail.session.sessionType,
+    configuration: {
+      targetSize: detailTargetSize(detail),
+      activeTargetCount: Number(detail.configuration.activeTargetCount) || 3,
+    },
+    events: detail.events,
+    phases: analytics.phases,
+    integrity: {
+      ...analytics.integrity,
+      passed: integrityPassed,
+      errors: detail.integrityErrors,
+    },
+    gradeDetails: analytics.grade,
+    grade: detail.session.grade,
+    score: detail.session.score,
+    shots: detail.session.hits + detail.session.misses,
+    hits: detail.session.hits,
+    misses: detail.session.misses,
+    accuracy: detail.session.accuracy,
+    maxCombo: detail.session.maxCombo,
+    averageReactionTime: detail.session.averageHitInterval,
+    fastestReactionTime: analytics.fastestHitInterval,
+    targetsPerMinute: detail.session.targetsPerMinute,
+    scoreTimeline: analytics.timeline.map((point) => ({ time: point.time, score: point.score })),
+    averageHitInterval: detail.session.averageHitInterval,
+    medianHitInterval: analytics.medianHitInterval,
+    fastestHitInterval: analytics.fastestHitInterval,
+    slowestHitInterval: analytics.slowestHitInterval,
+    averageTargetLifetime: analytics.averageTargetLifetime,
+    consistencyScore: detail.session.consistencyScore,
+    baseScoreTotal: analytics.baseScoreTotal,
+    speedBonusTotal: analytics.speedBonusTotal,
+    comboBonusTotal: analytics.comboBonusTotal,
+    stabilityBonusTotal: analytics.stabilityBonusTotal,
+    currentPace: detail.session.targetsPerMinute,
+    projectedFinalScore: detail.session.score,
+    personalBestDeltaPercent: 0,
+    hitIntervals: analytics.hitIntervals,
+    timeline: analytics.timeline.map((point) => ({
+      time: point.time,
+      score: point.score,
+      accuracy: point.accuracy,
+      tpm: point.targetsPerMinute,
+      combo: point.combo,
+    })),
   };
 }

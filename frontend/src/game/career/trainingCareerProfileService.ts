@@ -16,7 +16,7 @@ export interface TrainingCareerMetricProfile {
 }
 
 export interface TrainingCareerDimensionProfile {
-  code: "CLICK_PRECISION" | "TARGET_SWITCHING" | "RHYTHM_STABILITY" | "SUSTAINED_CONTROL";
+  code: string;
   primaryMetric: string;
   trend: TrainingCareerTrend;
   metrics: TrainingCareerMetricProfile[];

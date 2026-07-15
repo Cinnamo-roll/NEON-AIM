@@ -610,7 +610,13 @@ export function GridShotTrainingPage({ settings, gridShotSettings, sessionType, 
           <div className="grid-shot-benchmark-badge" data-session-type={benchmarkMode ? "benchmark" : "practice"}>
             {benchmarkMode ? <Target size={14} /> : <SlidersHorizontal size={14} />}
             <b>{benchmarkMode ? tx("基准训练", "Benchmark") : tx("自由练习", "Free practice")}</b>
-            <span>{benchmarkMode ? tx("本局将计入生涯基线", "This run counts toward your career baseline") : tx("本局会保存，但不影响生涯基线", "Saved without affecting your career baseline")}</span>
+            <span>{authStatus !== "authenticated"
+              ? benchmarkMode
+                ? tx("完成后登录可保存本局并计入生涯", "Sign in after the run to save it to Career")
+                : tx("访客成绩仅保留到当前结算页", "Guest results remain only on the current result page")
+              : benchmarkMode
+                ? tx("本局将计入生涯基线", "This run counts toward your career baseline")
+                : tx("本局会保存，但不影响生涯基线", "Saved without affecting your career baseline")}</span>
           </div>
           <h1>GRID <b>SHOT</b></h1>
           {coachingTask?.status === "ACTIVE" && (

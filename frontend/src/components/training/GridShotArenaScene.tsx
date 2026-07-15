@@ -93,7 +93,6 @@ type TargetRefs = {
   body: Array<THREE.Mesh | null>;
   core: Array<THREE.Mesh | null>;
   contour: Array<THREE.Mesh | null>;
-  statusRing: Array<THREE.Mesh | null>;
   spawnRing: Array<THREE.Mesh | null>;
   collider: Array<THREE.Mesh | null>;
   impactCore: Array<THREE.Mesh | null>;
@@ -231,7 +230,7 @@ export const GridShotArenaScene = forwardRef<GridShotSceneApi, ArenaSceneProps>(
 ) {
   const { camera, gl } = useThree();
   const pool = useRef(makeScenePool());
-  const refs = useRef<TargetRefs>({ root: [], face: [], body: [], core: [], contour: [], statusRing: [], spawnRing: [], collider: [], impactCore: [], impact: [], impactHalo: [], particles: [] });
+  const refs = useRef<TargetRefs>({ root: [], face: [], body: [], core: [], contour: [], spawnRing: [], collider: [], impactCore: [], impact: [], impactHalo: [], particles: [] });
   const raycaster = useMemo(() => new THREE.Raycaster(), []);
   const pointerNdc = useMemo(() => new THREE.Vector2(), []);
   const dragging = useRef(false);
@@ -288,7 +287,7 @@ export const GridShotArenaScene = forwardRef<GridShotSceneApi, ArenaSceneProps>(
     body: new THREE.CylinderGeometry(0.49 * targetSize, 0.49 * targetSize, 0.14, 40, 1),
     core: new THREE.CylinderGeometry(0.115 * targetSize, 0.115 * targetSize, 0.158, 32, 1),
     contour: new THREE.TorusGeometry(0.455 * targetSize, 0.018, 8, 40),
-    status: new THREE.TorusGeometry(0.55 * targetSize, 0.01, 6, 40),
+    spawn: new THREE.TorusGeometry(0.55 * targetSize, 0.01, 6, 40),
     impactCore: new THREE.CircleGeometry(0.48 * targetSize, 40),
     impact: new THREE.TorusGeometry(0.5 * targetSize, 0.025, 8, 40),
     impactHalo: new THREE.TorusGeometry(0.58 * targetSize, 0.012, 6, 48),
@@ -310,7 +309,6 @@ export const GridShotArenaScene = forwardRef<GridShotSceneApi, ArenaSceneProps>(
   })), [scene]);
   const sharedMaterials = useMemo(() => ({
     contour: new THREE.MeshBasicMaterial({ color: "#e9ffff", transparent: true, opacity: 0.68, toneMapped: false }),
-    status: new THREE.MeshBasicMaterial({ color: "#65dce7", transparent: true, opacity: 0.12, depthWrite: false, toneMapped: false }),
     collider: new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false, colorWrite: false }),
     marker: new THREE.MeshBasicMaterial({ color: "#46737b", transparent: true, opacity: 0.72, toneMapped: false }),
   }), []);
@@ -452,14 +450,13 @@ export const GridShotArenaScene = forwardRef<GridShotSceneApi, ArenaSceneProps>(
       const body = refs.current.body[target.id];
       const core = refs.current.core[target.id];
       const contour = refs.current.contour[target.id];
-      const statusRing = refs.current.statusRing[target.id];
       const spawnRing = refs.current.spawnRing[target.id];
       const collider = refs.current.collider[target.id];
       const impactCore = refs.current.impactCore[target.id];
       const impact = refs.current.impact[target.id];
       const impactHalo = refs.current.impactHalo[target.id];
       const particles = refs.current.particles[target.id];
-      if (!root || !face || !body || !core || !contour || !statusRing || !spawnRing || !collider || !impactCore || !impact || !impactHalo || !particles) continue;
+      if (!root || !face || !body || !core || !contour || !spawnRing || !collider || !impactCore || !impact || !impactHalo || !particles) continue;
 
       const isActive = target.state === "active";
       const isHit = target.state === "hit" || target.state === "despawning";
@@ -481,8 +478,6 @@ export const GridShotArenaScene = forwardRef<GridShotSceneApi, ArenaSceneProps>(
       coreMaterial.emissiveIntensity = isHit ? 3.4 * (1 - target.hitProgress) : 0.45 + target.spawnProgress * 0.5;
 
       contour.visible = isActive && target.spawnProgress > 0.1;
-      statusRing.visible = isActive && target.ringVisible && target.spawnProgress > 0.48;
-      statusRing.scale.setScalar(0.9 + target.spawnProgress * 0.1);
       spawnRing.visible = isActive && target.spawnProgress < 0.92;
       spawnRing.scale.setScalar(0.68 + target.spawnProgress * 0.78);
       (spawnRing.material as THREE.MeshBasicMaterial).opacity = 0.38 * (1 - target.spawnProgress);
@@ -592,15 +587,8 @@ export const GridShotArenaScene = forwardRef<GridShotSceneApi, ArenaSceneProps>(
             raycast={() => undefined}
           />
           <mesh
-            ref={(value) => { refs.current.statusRing[target.id] = value; }}
-            geometry={targetGeometries.status}
-            material={sharedMaterials.status}
-            position={[0, 0, 0.07]}
-            raycast={() => undefined}
-          />
-          <mesh
             ref={(value) => { refs.current.spawnRing[target.id] = value; }}
-            geometry={targetGeometries.status}
+            geometry={targetGeometries.spawn}
             material={targetMaterials[target.id].spawn}
             position={[0, 0, 0.075]}
             raycast={() => undefined}

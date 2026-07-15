@@ -2,7 +2,8 @@ package com.neonaim.training;
 
 import com.neonaim.common.error.ApiException;
 import com.neonaim.training.api.TrainingAnalysisSnapshot;
-import com.neonaim.training.api.TrainingCareerAnalysisOperations;
+import com.neonaim.training.api.TrainingCareerAnalysisOperations.CareerContext;
+import com.neonaim.training.api.TrainingCareerAnalysisOperations.Confidence;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -25,9 +26,10 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 @Service
-class TrainingCareerProfileService implements TrainingCareerAnalysisOperations {
+class TrainingCareerProfileService implements TrainingCareerProfileStrategy {
 
 	static final int PROFILE_SCHEMA_VERSION = 1;
+	static final String TRAINING_ID = "grid-shot";
 	static final String PROFILE_VERSION = "grid-shot-career-profile-v1";
 	static final String GRID_SHOT_BENCHMARK_CONFIGURATION = "grid-shot:60s:medium";
 	static final int GRID_SHOT_BENCHMARK_MODE_VERSION = 1;
@@ -46,15 +48,27 @@ class TrainingCareerProfileService implements TrainingCareerAnalysisOperations {
 		this.clock = clock;
 	}
 
-	@Transactional(readOnly = true)
-	ProfileView profile(UUID userId, String trainingId) {
-		return projection(userId, trainingId).profile();
+	@Override
+	public String trainingId() {
+		return TRAINING_ID;
 	}
 
 	@Override
 	@Transactional(readOnly = true)
-	public CareerContext loadCareerAnalysisContext(UUID userId, String trainingId) {
-		Projection projection = projection(userId, trainingId);
+	public Object profile(UUID userId) {
+		return projection(userId).profile();
+	}
+
+	@Transactional(readOnly = true)
+	ProfileView profile(UUID userId, String trainingId) {
+		requireSupportedTraining(trainingId);
+		return projection(userId).profile();
+	}
+
+	@Override
+	@Transactional(readOnly = true)
+	public CareerContext loadCareerAnalysisContext(UUID userId) {
+		Projection projection = projection(userId);
 		List<Measurement> benchmark = projection.benchmark();
 		if (benchmark.size() < MIN_BENCHMARK_SAMPLE) {
 			throw new ApiException(HttpStatus.CONFLICT, "CAREER_BENCHMARK_SAMPLE_TOO_SMALL",
@@ -68,12 +82,20 @@ class TrainingCareerProfileService implements TrainingCareerAnalysisOperations {
 				benchmark.size(), benchmark.size(), 1);
 	}
 
-	private Projection projection(UUID userId, String trainingId) {
-		if (!"grid-shot".equals(trainingId)) {
+	CareerContext loadCareerAnalysisContext(UUID userId, String trainingId) {
+		requireSupportedTraining(trainingId);
+		return loadCareerAnalysisContext(userId);
+	}
+
+	private static void requireSupportedTraining(String trainingId) {
+		if (!TRAINING_ID.equals(trainingId)) {
 			throw new ApiException(HttpStatus.BAD_REQUEST, "TRAINING_UNSUPPORTED", "该训练模式尚未开放能力档案");
 		}
+	}
+
+	private Projection projection(UUID userId) {
 		List<TrainingSession> sessions = repository
-				.findByUserIdAndTrainingIdOrderByCompletedAtDesc(userId, trainingId,
+				.findByUserIdAndTrainingIdOrderByCompletedAtDesc(userId, TRAINING_ID,
 						PageRequest.of(0, MAX_PROFILE_SESSIONS))
 				.getContent();
 		List<TrainingSession> valid = sessions.stream()
@@ -92,7 +114,7 @@ class TrainingCareerProfileService implements TrainingCareerAnalysisOperations {
 		List<String> capabilityCodes = dimensions.stream().map(DimensionProfile::code).toList();
 		Instant updatedAt = benchmark.isEmpty() ? null : benchmark.getFirst().session().completedAt();
 		ProfileView view = new ProfileView(PROFILE_SCHEMA_VERSION, PROFILE_VERSION, dataVersion,
-				trainingId, new BenchmarkDefinition(GRID_SHOT_BENCHMARK_CONFIGURATION,
+				TRAINING_ID, new BenchmarkDefinition(GRID_SHOT_BENCHMARK_CONFIGURATION,
 						GRID_SHOT_BENCHMARK_MODE_VERSION, GRID_SHOT_BENCHMARK_SCORING_VERSION,
 						60, "medium", 3),
 				new SampleSummary(sessions.size(), valid.size(), benchmark.size(),

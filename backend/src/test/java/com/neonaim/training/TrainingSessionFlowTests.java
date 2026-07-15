@@ -33,6 +33,7 @@ class TrainingSessionFlowTests {
 
 	@BeforeEach
 	void cleanDatabase() {
+		jdbcTemplate.update("DELETE FROM ai_provider_settings");
 		jdbcTemplate.update("DELETE FROM training_coaching_tasks");
 		jdbcTemplate.update("DELETE FROM training_career_ai_analysis_calls");
 		jdbcTemplate.update("DELETE FROM training_ai_analysis_calls");
@@ -77,10 +78,17 @@ class TrainingSessionFlowTests {
 
 		mockMvc.perform(get("/api/training/sessions/" + sessionId + "/ai-analysis")
 					.header("Authorization", "Bearer " + token))
-				.andExpect(status().isForbidden());
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.status").value("NOT_REQUESTED"))
+				.andExpect(jsonPath("$.data.analysis.source").value("RULES"));
+		mockMvc.perform(post("/api/training/sessions/" + sessionId + "/ai-analysis")
+					.header("Authorization", "Bearer " + token))
+				.andExpect(status().isServiceUnavailable())
+				.andExpect(jsonPath("$.code").value("AI_PROVIDER_NOT_CONFIGURED"));
 		mockMvc.perform(get("/api/training/career/grid-shot/ai-analysis")
 					.header("Authorization", "Bearer " + token))
-				.andExpect(status().isForbidden());
+				.andExpect(status().isConflict())
+				.andExpect(jsonPath("$.code").value("CAREER_BENCHMARK_SAMPLE_TOO_SMALL"));
 		mockMvc.perform(get("/api/training/career/grid-shot/coaching-task")
 					.header("Authorization", "Bearer " + token))
 				.andExpect(status().isForbidden());
@@ -99,6 +107,17 @@ class TrainingSessionFlowTests {
 
 		jdbcTemplate.update("UPDATE user_accounts SET role = 'ADMIN' WHERE username_normalized = ?", "training_pilot");
 		String adminToken = loginAndToken("training_pilot", "Pilot1234");
+		mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put("/api/admin/ai/providers")
+					.header("Authorization", "Bearer " + adminToken)
+					.contentType(MediaType.APPLICATION_JSON)
+					.content("""
+							{"provider":"openai","apiKey":"sk-shared-admin-test-key","model":"gpt-4o-mini"}
+							"""))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.configured").value(true))
+				.andExpect(jsonPath("$.data.provider").value("openai"))
+				.andExpect(jsonPath("$.data.apiKeyHint").value("••••-key"))
+				.andExpect(jsonPath("$.data.apiKey").doesNotExist());
 		mockMvc.perform(get("/api/training/sessions/" + sessionId + "/ai-analysis")
 					.header("Authorization", "Bearer " + adminToken))
 				.andExpect(status().isOk())

@@ -31,6 +31,8 @@ springdoc:
     path: /swagger-ui
 
 app:
+  ai:
+    configuration-secret: ${AI_CONFIGURATION_SECRET:${AUTH_JWT_SECRET:local-neon-aim-development-secret-change-before-production}}
   cors:
     allowed-origins:
       - ${FRONTEND_ORIGIN:http://127.0.0.1:5173}

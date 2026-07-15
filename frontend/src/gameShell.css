@@ -997,7 +997,9 @@ main.workspace-main {
 .topbar-avatar-fallback { width: 31px; height: 31px; }
 .topbar-player-trigger .profile-avatar.avatar-choice,
 .topbar-avatar-fallback { border-radius: 50%; }
-.topbar-avatar-fallback { display: grid; place-items: center; border: 1px solid #3b5962; background: #10262e; color: #75dbe1; }
+.topbar-avatar-fallback { display: grid; place-items: center; border: 1px solid #38535c; background: #0b181e; color: #9bb0b6; }
+.topbar-avatar-fallback > svg { width: 19px; height: 19px; }
+.topbar-player-trigger.guest-direct:hover .topbar-avatar-fallback { border-color: #4a6b74; background: #102229; color: #d2e0e2; }
 .topbar-player-name { max-width: 104px; min-width: 0; overflow: hidden; font: 600 11px Inter, sans-serif; text-overflow: ellipsis; white-space: nowrap; }
 .topbar-player-trigger > svg { color: #607981; transition: transform .18s ease, color .18s ease; }
 .topbar-player-trigger > svg.open { color: #7de9ef; transform: rotate(180deg); }

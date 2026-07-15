@@ -25,7 +25,7 @@ describe("model provider connection service", () => {
       message: null,
     });
 
-    const result = await testModelProviderConnection("deepseek", "sk-deepseek-test-key", "deepseek-v4-pro");
+    const result = await testModelProviderConnection("deepseek", "deepseek-v4-pro", "sk-deepseek-test-key");
 
     expect(result.success).toBe(true);
     expect(requestMock).toHaveBeenCalledWith("/api/admin/ai/providers/test", {
@@ -34,6 +34,33 @@ describe("model provider connection service", () => {
         provider: "deepseek",
         apiKey: "sk-deepseek-test-key",
         model: "deepseek-v4-pro",
+      }),
+    });
+  });
+
+  it("omits the key when the server should use the saved provider credentials", async () => {
+    requestMock.mockResolvedValue({
+      data: {
+        success: true,
+        provider: "deepseek",
+        requestedModel: "deepseek-chat",
+        resolvedModel: "deepseek-chat",
+        durationMs: 96,
+        inputTokens: 7,
+        outputTokens: 3,
+        failureCode: null,
+        message: null,
+      },
+      message: null,
+    });
+
+    await testModelProviderConnection("deepseek", "deepseek-chat");
+
+    expect(requestMock).toHaveBeenCalledWith("/api/admin/ai/providers/test", {
+      method: "POST",
+      body: JSON.stringify({
+        provider: "deepseek",
+        model: "deepseek-chat",
       }),
     });
   });

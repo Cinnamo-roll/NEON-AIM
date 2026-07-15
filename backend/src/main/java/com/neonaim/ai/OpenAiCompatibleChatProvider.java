@@ -1,6 +1,5 @@
 package com.neonaim.ai;
 
-import com.neonaim.training.api.TrainingAnalysisSnapshot;
 import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -21,27 +20,10 @@ import tools.jackson.databind.ObjectMapper;
 final class OpenAiCompatibleChatProvider implements TrainingAnalysisProvider {
 
 	private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(30);
-	private static final String SYSTEM_PROMPT = """
-			你是 NEON AIM 的 Grid Shot 教练。只能使用用户提供的压缩数据，不得虚构鼠标轨迹、目标位置、反应时间或事件。
-			请用简洁中文返回 JSON。先判断数据里是否有值得保留的优势：有明确证据时，headline 和 summary 必须先肯定优势，findings 第一条必须是 POSITIVE；没有证据时不要硬夸。
-			肯定之后只指出一个最影响得分的问题，并给出下一局可量化目标。不要为了给建议而强行寻找缺点；整体表现优秀时，可以把下一步写成保持优势或小幅挑战。
-			findings 最多两条，目标最多两条。headline、title 不超过 18 个汉字，summary、evidence、advice、description 各不超过 45 个汉字。
-			JSON 必须严格采用以下结构，不要 Markdown：
-			{"headline":"...","summary":"...","findings":[{"code":"...","severity":"POSITIVE|OPPORTUNITY|WARNING","title":"...","evidence":"...","advice":"..."}],"nextAction":{"title":"...","description":"...","targets":[{"metric":"accuracy|consistencyScore|targetsPerMinute|averageHitInterval|lastPhaseAccuracy|maxCombo","label":"...","operator":"AT_LEAST|AT_MOST","value":90,"unit":"%"}]}}
-			""";
-	private static final String CAREER_PROMPT = """
+	private static final String OUTPUT_INSTRUCTIONS = """
 
-			当前输入 scope=CAREER，windows 按时间从早到晚表示最近各局，不是单局时间阶段。
-			必须先看 sampleSize、comparableSampleSize、configurationCount 和信号：同配置少于 5 局时明确称为“初步观察”；
-			存在 MIXED_CONFIGURATIONS 时，不得把不同训练时长或靶子大小之间的差异说成进步或退步。
-			跨时长只可比较 scorePerMinute、accuracy、targetsPerMinute、averageHitInterval、consistencyScore；趋势结论只能使用同配置 comparison。
-			configurationKey=grid-shot:60s:medium 且存在 BENCHMARK_BASELINE 时，输入已限定为基准训练，可直接围绕该基线分析。
-			""";
-	private static final String SESSION_PROMPT = """
-
-			当前输入 scope=SESSION。comparison 只包含最近最多 5 局同配置、同规则版本的有效训练。
-			comparison 缺失或 sampleSize 少于 2 时，只能分析本局；sampleSize 为 2–4 时称为“初步趋势”；
-			sampleSize 达到 5 时才可把对比称为较稳定趋势。不要把单局阶段波动说成长期进步或退步。
+			Return JSON only, with this structure:
+			{"headline":"...","summary":"...","findings":[{"code":"...","severity":"POSITIVE|OPPORTUNITY|WARNING","title":"...","evidence":"...","advice":"..."}],"nextAction":{"title":"...","description":"...","targets":[{"metric":"...","label":"...","operator":"AT_LEAST|AT_MOST","value":90,"unit":"..."}]}}
 			""";
 
 	private final HttpClient httpClient;
@@ -72,7 +54,7 @@ final class OpenAiCompatibleChatProvider implements TrainingAnalysisProvider {
 				.timeout(REQUEST_TIMEOUT)
 				.header("Authorization", "Bearer " + apiKey)
 				.header("Content-Type", "application/json")
-				.POST(HttpRequest.BodyPublishers.ofString(requestBody(request.snapshot(), request.budget())))
+				.POST(HttpRequest.BodyPublishers.ofString(requestBody(request)))
 				.build();
 		HttpResponse<String> response = send(httpRequest);
 		if (response.statusCode() < 200 || response.statusCode() >= 300) {
@@ -117,16 +99,19 @@ final class OpenAiCompatibleChatProvider implements TrainingAnalysisProvider {
 		return profile.id() + "-chat:" + model;
 	}
 
-	private String requestBody(TrainingAnalysisSnapshot snapshot, TrainingAnalysisPolicy.TokenBudget budget) {
+	private String requestBody(AnalysisRequest analysisRequest) {
 		try {
 			Map<String, Object> request = new LinkedHashMap<>();
 			request.put("model", model);
 			request.put("messages", List.of(
-					Map.of("role", "system", "content", SYSTEM_PROMPT
-							+ (snapshot.scope() == TrainingAnalysisSnapshot.Scope.CAREER ? CAREER_PROMPT : SESSION_PROMPT)),
-					Map.of("role", "user", "content", objectMapper.writeValueAsString(snapshot))));
+					Map.of("role", "system", "content", analysisRequest.prompt().instructions()
+							+ "\nAllowed target metrics: "
+							+ String.join(", ", analysisRequest.prompt().supportedTargetMetrics())
+							+ OUTPUT_INSTRUCTIONS),
+					Map.of("role", "user", "content", objectMapper.writeValueAsString(
+							analysisRequest.snapshot()))));
 			request.put("response_format", Map.of("type", "json_object"));
-			request.put("max_tokens", budget.maxOutputTokens());
+			request.put("max_tokens", analysisRequest.budget().maxOutputTokens());
 			request.put("temperature", 0.1);
 			request.put("stream", false);
 			if (profile == Profile.DEEPSEEK) {

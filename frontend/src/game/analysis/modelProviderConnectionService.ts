@@ -15,12 +15,12 @@ export interface ModelProviderConnectionResult {
 
 export async function testModelProviderConnection(
   provider: ModelProviderId,
-  apiKey: string,
   model: string,
+  apiKey?: string,
 ) {
   const response = await authenticatedRequest<ModelProviderConnectionResult>("/api/admin/ai/providers/test", {
     method: "POST",
-    body: JSON.stringify({ provider, apiKey, model }),
+    body: JSON.stringify({ provider, apiKey: apiKey?.trim() || undefined, model }),
   });
   return response.data;
 }

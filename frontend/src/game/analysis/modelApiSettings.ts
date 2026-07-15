@@ -108,3 +108,8 @@ export function saveModelApiSettings(settings: ModelApiSettings) {
   const value = sanitize(settings);
   localStorage.setItem(MODEL_API_SETTINGS_KEY, JSON.stringify(value));
 }
+
+export function clearModelApiSettings() {
+  localStorage.removeItem(MODEL_API_SETTINGS_KEY);
+  localStorage.removeItem(LEGACY_MODEL_API_SETTINGS_KEY);
+}

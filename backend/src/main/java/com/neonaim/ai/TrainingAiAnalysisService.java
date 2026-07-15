@@ -8,6 +8,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.Executor;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.core.task.TaskRejectedException;
 import org.springframework.stereotype.Service;
@@ -15,32 +16,47 @@ import org.springframework.stereotype.Service;
 @Service
 class TrainingAiAnalysisService {
 
-	static final String PROMPT_VERSION = "grid-shot-session-v5";
-	private static final String ENGINE_VERSION = "ai-analysis-v1";
 	private static final Duration STALE_PENDING_AFTER = Duration.ofMinutes(2);
 
 	private final TrainingSessionAnalysisOperations trainingOperations;
 	private final TrainingAiAnalysisCallRepository callRepository;
 	private final TrainingAnalysisGateway gateway;
 	private final TrainingAnalysisProviderRegistry providerRegistry;
+	private final AiProviderSettingsService providerSettings;
+	private final TrainingAiAnalysisStrategyRegistry strategyRegistry;
 	private final Executor executor;
 	private final Clock clock;
 
+	@Autowired
 	TrainingAiAnalysisService(TrainingSessionAnalysisOperations trainingOperations,
 			TrainingAiAnalysisCallRepository callRepository, TrainingAnalysisGateway gateway,
-			TrainingAnalysisProviderRegistry providerRegistry,
+			TrainingAnalysisProviderRegistry providerRegistry, AiProviderSettingsService providerSettings,
+			TrainingAiAnalysisStrategyRegistry strategyRegistry,
 			@Qualifier("trainingAiExecutor") Executor executor, Clock clock) {
 		this.trainingOperations = trainingOperations;
 		this.callRepository = callRepository;
 		this.gateway = gateway;
 		this.providerRegistry = providerRegistry;
+		this.providerSettings = providerSettings;
+		this.strategyRegistry = strategyRegistry;
 		this.executor = executor;
 		this.clock = clock;
 	}
 
-	JobView trigger(UUID userId, UUID sessionId, String providerName, String apiKey, String model) {
+	TrainingAiAnalysisService(TrainingSessionAnalysisOperations trainingOperations,
+			TrainingAiAnalysisCallRepository callRepository, TrainingAnalysisGateway gateway,
+			TrainingAnalysisProviderRegistry providerRegistry, AiProviderSettingsService providerSettings,
+			Executor executor, Clock clock) {
+		this(trainingOperations, callRepository, gateway, providerRegistry, providerSettings,
+				new TrainingAiAnalysisStrategyRegistry(List.of(new GridShotTrainingAiAnalysisStrategy())),
+				executor, clock);
+	}
+
+	JobView trigger(UUID userId, UUID sessionId) {
 		TrainingSessionAnalysisOperations.AnalysisContext context =
 				trainingOperations.loadAnalysisContext(userId, sessionId);
+		TrainingAiAnalysisStrategy strategy = strategyRegistry.require(context.snapshot().trainingId());
+		TrainingAiAnalysisStrategy.PromptSpec prompt = strategy.prompt(context.snapshot().scope());
 		TrainingAiAnalysisCall pending = callRepository
 				.findFirstByUserIdAndSessionIdAndStatusOrderByCreatedAtDesc(
 						userId, sessionId, TrainingAiAnalysisCall.Status.PENDING)
@@ -53,11 +69,14 @@ class TrainingAiAnalysisService {
 			callRepository.save(pending);
 		}
 
-		TrainingAnalysisProvider provider = providerRegistry.create(providerName, apiKey, model);
+		AiProviderSettingsService.Credentials credentials = providerSettings.requireCredentials();
+		TrainingAnalysisProvider provider = providerRegistry.create(
+				credentials.provider(), credentials.apiKey(), credentials.model());
 		TrainingAiAnalysisCall call = callRepository.saveAndFlush(new TrainingAiAnalysisCall(userId, sessionId,
-				provider.providerId(), model, PROMPT_VERSION, context.snapshot().dataVersion(), clock.instant()));
+				provider.providerId(), credentials.model(), prompt.promptVersion(),
+				context.snapshot().dataVersion(), clock.instant()));
 		try {
-			executor.execute(() -> analyze(call.id(), userId, sessionId, providerName, apiKey, model));
+			executor.execute(() -> analyze(call.id(), userId, sessionId, credentials));
 		}
 		catch (TaskRejectedException exception) {
 			call.fail("AI_QUEUE_FULL", "AI 分析任务较多，请稍后重试", clock.instant());
@@ -69,6 +88,7 @@ class TrainingAiAnalysisService {
 	JobView latest(UUID userId, UUID sessionId) {
 		TrainingSessionAnalysisOperations.AnalysisContext context =
 				trainingOperations.loadAnalysisContext(userId, sessionId);
+		strategyRegistry.require(context.snapshot().trainingId());
 		TrainingAiAnalysisCall latest = callRepository
 				.findFirstByUserIdAndSessionIdOrderByCreatedAtDesc(userId, sessionId)
 				.orElse(null);
@@ -82,8 +102,8 @@ class TrainingAiAnalysisService {
 		return view(latest, context.currentAnalysis(), context.snapshot());
 	}
 
-	private void analyze(UUID callId, UUID userId, UUID sessionId, String providerName,
-			String apiKey, String model) {
+	private void analyze(UUID callId, UUID userId, UUID sessionId,
+			AiProviderSettingsService.Credentials credentials) {
 		TrainingAiAnalysisCall call = callRepository.findById(callId).orElse(null);
 		if (call == null || call.status() != TrainingAiAnalysisCall.Status.PENDING) {
 			return;
@@ -91,9 +111,12 @@ class TrainingAiAnalysisService {
 		try {
 			TrainingSessionAnalysisOperations.AnalysisContext context =
 					trainingOperations.loadAnalysisContext(userId, sessionId);
-			TrainingAnalysisProvider provider = providerRegistry.create(providerName, apiKey, model);
+			TrainingAiAnalysisStrategy strategy = strategyRegistry.require(context.snapshot().trainingId());
+			TrainingAiAnalysisStrategy.PromptSpec prompt = strategy.prompt(context.snapshot().scope());
+			TrainingAnalysisProvider provider = providerRegistry.create(
+					credentials.provider(), credentials.apiKey(), credentials.model());
 			TrainingAnalysisGateway.AnalysisOutcome outcome = gateway.analyze(userId.toString(),
-					context.snapshot(), PROMPT_VERSION, provider);
+					context.snapshot(), strategy, provider);
 			if (outcome.status() == TrainingAnalysisGateway.Status.BUDGET_EXHAUSTED) {
 				call.budgetExhausted(clock.instant());
 				callRepository.save(call);
@@ -104,7 +127,7 @@ class TrainingAiAnalysisService {
 				callRepository.save(call);
 				return;
 			}
-			TrainingAnalysisResult result = toTrainingResult(outcome.providerId(), outcome.result());
+			TrainingAnalysisResult result = toTrainingResult(outcome.providerId(), outcome.result(), prompt);
 			trainingOperations.applyAiAnalysis(userId, sessionId, result);
 			call.complete(outcome.result().usage(), outcome.cacheHit(), clock.instant());
 			callRepository.save(call);
@@ -120,7 +143,8 @@ class TrainingAiAnalysisService {
 	}
 
 	private TrainingAnalysisResult toTrainingResult(String providerId,
-			TrainingAnalysisProvider.AnalysisResult providerResult) {
+			TrainingAnalysisProvider.AnalysisResult providerResult,
+			TrainingAiAnalysisStrategy.PromptSpec prompt) {
 		List<TrainingAnalysisResult.Finding> findings = providerResult.findings().stream()
 				.map(finding -> new TrainingAnalysisResult.Finding(finding.code(),
 						TrainingAnalysisResult.Severity.valueOf(finding.severity().name()),
@@ -132,8 +156,8 @@ class TrainingAiAnalysisService {
 						target.value(), target.unit()))
 				.toList();
 		return new TrainingAnalysisResult(TrainingAnalysisResult.CURRENT_SCHEMA_VERSION,
-				TrainingAnalysisResult.Status.READY, TrainingAnalysisResult.Source.AI, ENGINE_VERSION,
-				providerId, providerResult.model(), PROMPT_VERSION, providerResult.headline(),
+				TrainingAnalysisResult.Status.READY, TrainingAnalysisResult.Source.AI, prompt.engineVersion(),
+				providerId, providerResult.model(), prompt.promptVersion(), providerResult.headline(),
 				providerResult.summary(), findings,
 				new TrainingAnalysisResult.NextAction(providerResult.nextAction().title(),
 						providerResult.nextAction().description(), targets),

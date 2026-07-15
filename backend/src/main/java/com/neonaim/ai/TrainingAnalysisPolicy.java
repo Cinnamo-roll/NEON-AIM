@@ -21,8 +21,6 @@ public final class TrainingAnalysisPolicy {
 
 	private static final TokenBudget SESSION_BUDGET = new TokenBudget(900, 420);
 	private static final TokenBudget CAREER_BUDGET = new TokenBudget(1_800, 450);
-	private final TrainingAnalysisQualityGate qualityGate = new TrainingAnalysisQualityGate();
-
 	public TokenBudget budgetFor(TrainingAnalysisSnapshot.Scope scope) {
 		return scope == TrainingAnalysisSnapshot.Scope.SESSION ? SESSION_BUDGET : CAREER_BUDGET;
 	}
@@ -92,7 +90,8 @@ public final class TrainingAnalysisPolicy {
 	}
 
 	public void validateResult(TrainingAnalysisSnapshot snapshot,
-			TrainingAnalysisProvider.AnalysisResult result, TokenBudget budget) {
+			TrainingAnalysisProvider.AnalysisResult result, TokenBudget budget,
+			TrainingAiAnalysisStrategy strategy) {
 		if (result.findings().size() > MAX_FINDINGS) {
 			throw new IllegalStateException("provider returned too many findings");
 		}
@@ -116,7 +115,7 @@ public final class TrainingAnalysisPolicy {
 				|| result.usage().outputTokens() > budget.maxOutputTokens()) {
 			throw new IllegalStateException("provider exceeded the analysis token budget");
 		}
-		qualityGate.validate(snapshot, result);
+		new TrainingAnalysisQualityGate(strategy).validate(snapshot, result);
 	}
 
 	private static int metricCharacters(Map<String, Double> metrics) {

@@ -1,5 +1,4 @@
 import { authenticatedRequest } from "../../features/auth/authApi";
-import type { ModelProviderId } from "./modelApiSettings";
 import type { TrainingAnalysisResult } from "./trainingAnalysis";
 
 export type TrainingAiJobStatus = "NOT_REQUESTED" | "PENDING" | "READY" | "FAILED" | "BUDGET_EXHAUSTED";
@@ -24,10 +23,9 @@ export interface TrainingAiJob {
   completedAt: string | null;
 }
 
-export async function triggerTrainingAiAnalysis(sessionId: string, provider: ModelProviderId, apiKey: string, model: string) {
+export async function triggerTrainingAiAnalysis(sessionId: string) {
   const response = await authenticatedRequest<TrainingAiJob>(`/api/training/sessions/${sessionId}/ai-analysis`, {
     method: "POST",
-    body: JSON.stringify({ provider, apiKey, model }),
   });
   return response.data;
 }

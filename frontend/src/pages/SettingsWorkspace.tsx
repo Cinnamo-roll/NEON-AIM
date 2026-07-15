@@ -26,14 +26,19 @@ import { GameIcon } from "../components/GameIcon";
 import { interfaceAudio } from "../game/audio/interfaceAudio";
 import {
   activeModelProvider,
+  clearModelApiSettings,
   DEFAULT_MODEL_API_SETTINGS,
   MODEL_OPTIONS,
   MODEL_PROVIDERS,
   readModelApiSettings,
-  saveModelApiSettings,
   type ModelProviderId,
   type ModelApiSettings,
 } from "../game/analysis/modelApiSettings";
+import {
+  getAiProviderSettings,
+  saveAiProviderSettings,
+  type AiProviderSettingsView,
+} from "../game/analysis/aiProviderSettingsService";
 import {
   testModelProviderConnection,
   type ModelProviderConnectionResult,
@@ -65,6 +70,17 @@ type ChannelTestState = {
   result?: ModelProviderConnectionResult;
   message?: string;
 };
+
+function emptyModelApiSettings(): ModelApiSettings {
+  return {
+    activeProvider: DEFAULT_MODEL_API_SETTINGS.activeProvider,
+    providers: {
+      openai: { ...DEFAULT_MODEL_API_SETTINGS.providers.openai },
+      deepseek: { ...DEFAULT_MODEL_API_SETTINGS.providers.deepseek },
+      bailian: { ...DEFAULT_MODEL_API_SETTINGS.providers.bailian },
+    },
+  };
+}
 
 const tabs: Array<{ id: Tab; zh: string; en: string; icon: typeof MousePointer2 }> = [
   { id: "general", zh: "通用", en: "General", icon: Languages },
@@ -309,7 +325,10 @@ export function SettingsWorkspace({ settings, onApply, onClose, context = "globa
   const isAdmin = useAuthStore((state) => state.user?.role === "ADMIN");
   const [draft, setDraft] = useState(settings);
   const [modelApiDraft, setModelApiDraft] = useState<ModelApiSettings>(() => readModelApiSettings());
-  const [savedModelApi, setSavedModelApi] = useState<ModelApiSettings>(() => readModelApiSettings());
+  const [savedModelApi, setSavedModelApi] = useState<ModelApiSettings>(() => emptyModelApiSettings());
+  const [serverAiSettings, setServerAiSettings] = useState<AiProviderSettingsView>();
+  const [aiSettingsError, setAiSettingsError] = useState("");
+  const [savingAiSettings, setSavingAiSettings] = useState(false);
   const [showApiKey, setShowApiKey] = useState(false);
   const [channelTest, setChannelTest] = useState<ChannelTestState>({ status: "idle", fingerprint: "" });
   const [tab, setTab] = useState<Tab>("general");
@@ -321,6 +340,25 @@ export function SettingsWorkspace({ settings, onApply, onClose, context = "globa
   const rollbackRef = useRef(settings);
 
   useEffect(() => setDraft(settings), [settings]);
+  useEffect(() => {
+    if (!isAdmin) return;
+    let active = true;
+    void getAiProviderSettings().then((current) => {
+      if (!active) return;
+      setServerAiSettings(current);
+      setAiSettingsError("");
+      if (!current.configured || !current.provider || !current.model) return;
+      const next = emptyModelApiSettings();
+      next.activeProvider = current.provider;
+      next.providers[current.provider].model = current.model;
+      setModelApiDraft(next);
+      setSavedModelApi(next);
+      clearModelApiSettings();
+    }).catch((error) => {
+      if (active) setAiSettingsError(error instanceof Error ? error.message : tx("无法读取 AI 服务配置", "Could not load AI service settings"));
+    });
+    return () => { active = false; };
+  }, [isAdmin]);
   useEffect(() => {
     if (!confirm) return;
     const timer = window.setInterval(() => setConfirm((seconds) => {
@@ -352,7 +390,17 @@ export function SettingsWorkspace({ settings, onApply, onClose, context = "globa
   const activeModelChoice = activeModelOptions.some((option) => option.id === activeProviderConfig.model)
     ? activeProviderConfig.model
     : "custom";
-  const channelFingerprint = `${modelApiDraft.activeProvider}:${activeProviderConfig.apiKey}:${activeProviderConfig.model}`;
+  const configuredForActiveProvider = Boolean(
+    serverAiSettings?.configured && serverAiSettings.provider === modelApiDraft.activeProvider,
+  );
+  const testingWithSavedKey = configuredForActiveProvider && !activeProviderConfig.apiKey.trim();
+  const canTestChannel = Boolean(
+    activeProviderConfig.model.trim() && (activeProviderConfig.apiKey.trim() || configuredForActiveProvider),
+  );
+  const channelCredentialFingerprint = activeProviderConfig.apiKey.trim()
+    ? `draft:${activeProviderConfig.apiKey.trim()}`
+    : `saved:${serverAiSettings?.updatedAt ?? "none"}`;
+  const channelFingerprint = `${modelApiDraft.activeProvider}:${channelCredentialFingerprint}:${activeProviderConfig.model}`;
   const visibleChannelTest = channelTest.fingerprint === channelFingerprint ? channelTest : undefined;
   const patchModelProvider = (provider: ModelProviderId, patch: Partial<{ apiKey: string; model: string }>) => {
     setModelApiDraft((current) => ({
@@ -366,14 +414,14 @@ export function SettingsWorkspace({ settings, onApply, onClose, context = "globa
   const patch = <K extends keyof TrainingSettings>(key: K, value: TrainingSettings[K]) => setDraft((current) => ({ ...current, [key]: value }));
   const patchGraphics = <K extends keyof TrainingSettings>(key: K, value: TrainingSettings[K]) => patch(key, value);
   const testChannel = async () => {
-    if (!activeProviderConfig.apiKey.trim() || !activeProviderConfig.model.trim()) return;
+    if (!canTestChannel) return;
     const fingerprint = channelFingerprint;
     setChannelTest({ status: "testing", fingerprint });
     try {
       const result = await testModelProviderConnection(
         modelApiDraft.activeProvider,
-        activeProviderConfig.apiKey.trim(),
         activeProviderConfig.model.trim(),
+        activeProviderConfig.apiKey,
       );
       setChannelTest({
         status: result.success ? "success" : "failed",
@@ -389,14 +437,30 @@ export function SettingsWorkspace({ settings, onApply, onClose, context = "globa
       });
     }
   };
-  const apply = () => {
+  const apply = async () => {
     rollbackRef.current = settings;
     onApply(draft);
     if (modelApiChanged) {
-      saveModelApiSettings(modelApiDraft);
-      const saved = readModelApiSettings();
-      setModelApiDraft(saved);
-      setSavedModelApi(saved);
+      setSavingAiSettings(true);
+      setAiSettingsError("");
+      try {
+        const savedConfig = await saveAiProviderSettings(
+          modelApiDraft.activeProvider,
+          activeProviderConfig.model.trim(),
+          activeProviderConfig.apiKey,
+        );
+        const saved = emptyModelApiSettings();
+        saved.activeProvider = modelApiDraft.activeProvider;
+        saved.providers[modelApiDraft.activeProvider].model = activeProviderConfig.model.trim();
+        setModelApiDraft(saved);
+        setSavedModelApi(saved);
+        setServerAiSettings(savedConfig);
+        clearModelApiSettings();
+      } catch (error) {
+        setAiSettingsError(error instanceof Error ? error.message : tx("AI 服务配置保存失败", "Could not save AI service settings"));
+      } finally {
+        setSavingAiSettings(false);
+      }
     }
     if (graphicsChanged) setConfirm(12);
   };
@@ -448,24 +512,35 @@ export function SettingsWorkspace({ settings, onApply, onClose, context = "globa
         <SettingRow
           label="API Key"
         >
-          <span className="api-key-control">
-            <input
-              key={modelApiDraft.activeProvider}
-              aria-label={`${modelApiDraft.activeProvider} API Key`}
-              name={`model-api-key-${modelApiDraft.activeProvider}`}
-              autoComplete="new-password"
-              data-1p-ignore
-              data-lpignore="true"
-              spellCheck={false}
-              type={showApiKey ? "text" : "password"}
-              placeholder="sk-..."
-              value={activeProviderConfig.apiKey}
-              onChange={(event) => patchModelProvider(modelApiDraft.activeProvider, { apiKey: event.target.value })}
-            />
-            <button type="button" aria-label={showApiKey ? tx("隐藏 API Key", "Hide API key") : tx("显示 API Key", "Show API key")} onClick={() => setShowApiKey((value) => !value)}>
-              {showApiKey ? <EyeOff size={15} /> : <Eye size={15} />}
-            </button>
-          </span>
+          <div className="api-key-field">
+            <span className="api-key-control">
+              <input
+                key={modelApiDraft.activeProvider}
+                aria-label={`${modelApiDraft.activeProvider} API Key`}
+                name={`model-api-key-${modelApiDraft.activeProvider}`}
+                autoComplete="new-password"
+                data-1p-ignore
+                data-lpignore="true"
+                spellCheck={false}
+                type={showApiKey ? "text" : "password"}
+                placeholder={configuredForActiveProvider ? tx("输入新 Key 以替换", "Enter a new key to replace") : tx("输入 API Key", "Enter API key")}
+                value={activeProviderConfig.apiKey}
+                onChange={(event) => patchModelProvider(modelApiDraft.activeProvider, { apiKey: event.target.value })}
+              />
+              <button
+                type="button"
+                disabled={!activeProviderConfig.apiKey}
+                aria-label={showApiKey ? tx("隐藏新 API Key", "Hide new API key") : tx("显示新 API Key", "Show new API key")}
+                onClick={() => setShowApiKey((value) => !value)}
+              >
+                {showApiKey ? <EyeOff size={15} /> : <Eye size={15} />}
+              </button>
+            </span>
+            {configuredForActiveProvider && <div className="api-key-configured">
+              <span><CircleCheck size={14} /><b>{tx("服务器已配置", "Configured on server")}</b><code>{serverAiSettings?.apiKeyHint}</code></span>
+              <small>{tx("留空会保留当前密钥；只有输入新 Key 并保存时才会替换。", "Leave blank to keep it. It is replaced only when you enter and save a new key.")}</small>
+            </div>}
+          </div>
         </SettingRow>
         <SettingRow
           label={tx("分析模型", "Analysis model")}
@@ -499,12 +574,21 @@ export function SettingsWorkspace({ settings, onApply, onClose, context = "globa
           <div className="channel-test-control" data-state={visibleChannelTest?.status ?? "idle"}>
             <button
               type="button"
-              disabled={!activeProviderConfig.apiKey.trim() || !activeProviderConfig.model.trim() || visibleChannelTest?.status === "testing"}
+              disabled={!canTestChannel || visibleChannelTest?.status === "testing"}
               onClick={() => void testChannel()}
             >
               {visibleChannelTest?.status === "testing" ? <RotateCcw className="spin" size={15} /> : <PlugZap size={15} />}
-              {visibleChannelTest?.status === "testing" ? tx("正在测试", "Testing") : tx("测试当前通道", "Test connection")}
+              {visibleChannelTest?.status === "testing"
+                ? tx("正在测试", "Testing")
+                : testingWithSavedKey
+                  ? tx("测试已保存通道", "Test saved connection")
+                  : tx("测试当前输入", "Test current input")}
             </button>
+            <small className="channel-test-source"><KeyRound size={12} />{testingWithSavedKey
+              ? tx("安全使用服务器已保存的密钥，浏览器不会读取明文。", "Uses the saved server key securely; the browser never reads it.")
+              : activeProviderConfig.apiKey.trim()
+                ? tx("使用尚未保存的新 Key 测试。", "Tests with the new, unsaved key.")
+                : tx("请先为这个模型服务填写 API Key。", "Enter an API key for this provider first.")}</small>
             {visibleChannelTest?.status === "success" && visibleChannelTest.result && (
               <span><CircleCheck size={15} />{tx(
                 `${visibleChannelTest.result.resolvedModel ?? activeProviderConfig.model} · ${visibleChannelTest.result.durationMs}ms · ${visibleChannelTest.result.inputTokens + visibleChannelTest.result.outputTokens} Token`,
@@ -516,7 +600,8 @@ export function SettingsWorkspace({ settings, onApply, onClose, context = "globa
             )}
           </div>
         </SettingRow>
-        <div className="setting-fact ai-key-fact"><KeyRound size={16} /><div><b>{tx("成本控制已启用", "Cost controls enabled")}</b><span>{tx("单局只发送核心指标、三个阶段和最多五个信号；完整点击事件不会发送给模型。", "Each request sends only core metrics, three phases, and up to five signals. Raw click events are never sent to the model.")}</span></div></div>
+        {aiSettingsError && <div className="setting-fact ai-key-fact" data-state="error"><CircleAlert size={16} /><div><b>{tx("AI 服务配置未保存", "AI service settings were not saved")}</b><span>{aiSettingsError}</span></div></div>}
+        <div className="setting-fact ai-key-fact"><KeyRound size={16} /><div><b>{tx("全站 AI 分析配置", "Site-wide AI analysis settings")}</b><span>{tx("密钥加密保存在后端，仅管理员可更新；所有登录用户共用该分析服务。单局只发送压缩指标，不发送完整点击事件。", "The encrypted key is stored on the server and only admins can update it. All signed-in users share the analysis service; raw click events are never sent.")}</span></div></div>
       </SettingsSection>}
     </>
   );
@@ -617,7 +702,7 @@ export function SettingsWorkspace({ settings, onApply, onClose, context = "globa
         <section className={`settings-content tab-${tab}`}>{content}</section>
         {hasPreview && <SettingsPreview tab={tab} settings={draft} />}
       </div>
-      <div className="settings-actions"><div><span className={changed ? "dirty" : ""} />{changed ? `${tx("已修改", "Changed")} ${changedKeys.length + (modelApiChanged ? 1 : 0)} ${tx("项", "items")}` : tx("所有更改均已保存", "All changes saved")}</div><button type="button" onClick={() => { setDraft(settings); setModelApiDraft(savedModelApi); }} disabled={!changed}><Undo2 size={16} />{tx("撤销修改", "Undo changes")}</button><button type="button" onClick={resetCategory}><RotateCcw size={16} />{tx("恢复本类默认", "Reset category")}</button><button type="button" className="primary" disabled={!changed} onClick={apply}><Check size={17} />{tx("保存设置", "Save settings")}</button></div>
+      <div className="settings-actions"><div><span className={changed ? "dirty" : ""} />{changed ? `${tx("已修改", "Changed")} ${changedKeys.length + (modelApiChanged ? 1 : 0)} ${tx("项", "items")}` : tx("所有更改均已保存", "All changes saved")}</div><button type="button" onClick={() => { setDraft(settings); setModelApiDraft(savedModelApi); }} disabled={!changed || savingAiSettings}><Undo2 size={16} />{tx("撤销修改", "Undo changes")}</button><button type="button" onClick={resetCategory} disabled={savingAiSettings}><RotateCcw size={16} />{tx("恢复本类默认", "Reset category")}</button><button type="button" className="primary" disabled={!changed || savingAiSettings} onClick={() => void apply()}><Check size={17} />{savingAiSettings ? tx("正在保存", "Saving") : tx("保存设置", "Save settings")}</button></div>
       {confirm > 0 && <div className="graphics-confirm"><h3>{tx("保留新的画面设置？", "Keep these display settings?")}</h3><strong>{confirm}</strong><p>{tx("倒计时结束将自动恢复。", "Settings will revert when the timer ends.")}</p><div><button type="button" className="primary" onClick={() => setConfirm(0)}>{tx("保留设置", "Keep settings")}</button><button type="button" onClick={() => { onApply(rollbackRef.current); setDraft(rollbackRef.current); setConfirm(0); }}>{tx("恢复旧设置", "Revert")}</button></div></div>}
     </main>
   );

@@ -43,10 +43,9 @@ import type {
   GridShotHistoryRecord,
   TrainingSettings,
 } from "./game/types/training";
-import { readHistory } from "./game/storage/trainingStorage";
+import { saveGridShotTrainingSession } from "./game/modes/gridShot/gridShotTrainingSessionService";
 import {
-  saveGridShotTrainingSession,
-  syncPendingTrainingSessions,
+  clearRetiredLocalTrainingData,
   type TrainingSessionSaveStatus,
 } from "./game/storage/trainingSessionService";
 import {
@@ -56,6 +55,18 @@ import {
 import { BrowserFrameMonitor } from "./game/performance/PerformanceMonitor";
 import { interfaceAudio } from "./game/audio/interfaceAudio";
 import { sanitizeTrainingSettings } from "./game/settings/trainingSettings";
+import {
+  applyAccountPreferenceDocument,
+  applyDeviceTrainingSettings,
+  applyGridShotDeviceSettings,
+  createAccountPreferenceDocument,
+  deviceTrainingSettings,
+  DEVICE_SETTINGS_STORAGE_KEY,
+  GUEST_ACCOUNT_PREFERENCES_STORAGE_KEY,
+  gridShotDeviceSettings,
+  GRID_SHOT_DEVICE_SETTINGS_STORAGE_KEY,
+} from "./game/settings/accountPreferences";
+import { useAccountPreferencesSync } from "./game/settings/useAccountPreferencesSync";
 import { CROSSHAIR_PRESETS, matchCrosshairPreset } from "./game/settings/crosshairPresets";
 import {
   applyGridShotBenchmarkRules,
@@ -92,7 +103,12 @@ import "./gameShell.css";
 type ModeId = "grid" | "reflex" | "tracking";
 type Page = "boot" | "home" | "modes" | "game" | "results" | "progress" | "workshop" | "ranking" | "profile" | "settings" | "qa";
 type SettingsData = TrainingSettings;
-type GridSaveState = { sessionId?: string; serverSessionId?: string; status: TrainingSessionSaveStatus };
+type GridSaveState = {
+  sessionId?: string;
+  serverSessionId?: string;
+  status: TrainingSessionSaveStatus;
+  loginRequested?: boolean;
+};
 type Result = {
   mode: ModeId;
   score: number;
@@ -118,8 +134,10 @@ type AppState = {
   updateSettings: (v: Partial<SettingsData>) => void;
   updateGridShotSettings: (v: Partial<GridShotModeSettings>) => void;
   setGridShotSessionType: (value: GridShotSessionType) => void;
+  applyAccountPreferences: (value: unknown) => void;
+  restoreGuestPreferences: () => void;
   saveResult: (r: Result) => void;
-  setGridResult: (r: GridShotHistoryRecord, p?: GridShotHistoryRecord) => void;
+  setGridResult: (r?: GridShotHistoryRecord, p?: GridShotHistoryRecord) => void;
   setGridSaveState: (state: GridSaveState) => void;
 };
 const load = <T,>(key: string, fallback: T): T => {
@@ -129,21 +147,52 @@ const load = <T,>(key: string, fallback: T): T => {
     return fallback;
   }
 };
-const rawLoadedSettings = load<Record<string, unknown>>("neon-settings", {});
-const loadedSettings = sanitizeTrainingSettings(rawLoadedSettings);
-const normalizedLoadedSettings: SettingsData = {
-  ...loadedSettings,
-  ...normalizeNeonInputSettings(loadedSettings),
-};
-const loadedGridShotSettings = sanitizeGridShotModeSettings({
-  hitVolume: rawLoadedSettings.hitVolume,
-  missVolume: rawLoadedSettings.missVolume,
-  comboVolume: rawLoadedSettings.comboVolume,
+const legacyRawSettings = load<Record<string, unknown>>("neon-settings", {});
+const legacySettings = sanitizeTrainingSettings(legacyRawSettings);
+const legacyGridShotSettings = sanitizeGridShotModeSettings({
+  hitVolume: legacyRawSettings.hitVolume,
+  missVolume: legacyRawSettings.missVolume,
+  comboVolume: legacyRawSettings.comboVolume,
   ...load<Record<string, unknown>>("neon-grid-shot-settings", {}),
 });
-const loadedGridShotSessionType = load<GridShotSessionType>("neon-grid-shot-session-type", "practice") === "benchmark"
+const legacyGridShotSessionType = load<GridShotSessionType>("neon-grid-shot-session-type", "practice") === "benchmark"
   ? "benchmark"
   : "practice";
+const locallyConfiguredSettings = applyDeviceTrainingSettings(
+  legacySettings,
+  load(DEVICE_SETTINGS_STORAGE_KEY, deviceTrainingSettings(legacySettings)),
+);
+const locallyConfiguredGridShotSettings = applyGridShotDeviceSettings(
+  legacyGridShotSettings,
+  load(GRID_SHOT_DEVICE_SETTINGS_STORAGE_KEY, gridShotDeviceSettings(legacyGridShotSettings)),
+);
+const legacyGuestPreferences = createAccountPreferenceDocument(
+  legacySettings,
+  legacyGridShotSettings,
+  legacyGridShotSessionType,
+);
+const loadedPreferences = applyAccountPreferenceDocument(
+  {
+    settings: locallyConfiguredSettings,
+    gridShotSettings: locallyConfiguredGridShotSettings,
+    gridShotSessionType: legacyGridShotSessionType,
+  },
+  load(GUEST_ACCOUNT_PREFERENCES_STORAGE_KEY, legacyGuestPreferences),
+);
+const normalizedLoadedSettings: SettingsData = {
+  ...loadedPreferences.settings,
+  ...normalizeNeonInputSettings(loadedPreferences.settings),
+};
+const loadedGridShotSessionType = loadedPreferences.gridShotSessionType;
+const loadedGridShotSettings = loadedPreferences.gridShotSettings;
+localStorage.setItem(DEVICE_SETTINGS_STORAGE_KEY, JSON.stringify(deviceTrainingSettings(normalizedLoadedSettings)));
+localStorage.setItem(
+  GRID_SHOT_DEVICE_SETTINGS_STORAGE_KEY,
+  JSON.stringify(gridShotDeviceSettings(loadedGridShotSettings)),
+);
+if (localStorage.getItem(GUEST_ACCOUNT_PREFERENCES_STORAGE_KEY) === null) {
+  localStorage.setItem(GUEST_ACCOUNT_PREFERENCES_STORAGE_KEY, JSON.stringify(legacyGuestPreferences));
+}
 const pathPage = (): Page =>
   import.meta.env.DEV && location.pathname.startsWith("/dev/grid-shot-qa")
     ? "qa"
@@ -206,19 +255,50 @@ const useApp = create<AppState>((set, get) => ({
     set((s) => {
       const merged = { ...s.settings, ...v };
       const settings = { ...merged, ...normalizeNeonInputSettings(merged) };
-      localStorage.setItem("neon-settings", JSON.stringify(settings));
+      localStorage.setItem(DEVICE_SETTINGS_STORAGE_KEY, JSON.stringify(deviceTrainingSettings(settings)));
+      if (useAuthStore.getState().status !== "authenticated") {
+        localStorage.setItem(GUEST_ACCOUNT_PREFERENCES_STORAGE_KEY, JSON.stringify(
+          createAccountPreferenceDocument(settings, s.gridShotSettings, s.gridShotSessionType),
+        ));
+      }
       return { settings };
     }),
   updateGridShotSettings: (v) =>
     set((state) => {
       const gridShotSettings = sanitizeGridShotModeSettings({ ...state.gridShotSettings, ...v });
-      localStorage.setItem("neon-grid-shot-settings", JSON.stringify(gridShotSettings));
+      localStorage.setItem(
+        GRID_SHOT_DEVICE_SETTINGS_STORAGE_KEY,
+        JSON.stringify(gridShotDeviceSettings(gridShotSettings)),
+      );
+      if (useAuthStore.getState().status !== "authenticated") {
+        localStorage.setItem(GUEST_ACCOUNT_PREFERENCES_STORAGE_KEY, JSON.stringify(
+          createAccountPreferenceDocument(state.settings, gridShotSettings, state.gridShotSessionType),
+        ));
+      }
       return { gridShotSettings };
     }),
-  setGridShotSessionType: (gridShotSessionType) => {
-    localStorage.setItem("neon-grid-shot-session-type", JSON.stringify(gridShotSessionType));
-    set({ gridShotSessionType });
-  },
+  setGridShotSessionType: (gridShotSessionType) => set((state) => {
+    if (useAuthStore.getState().status !== "authenticated") {
+      localStorage.setItem(GUEST_ACCOUNT_PREFERENCES_STORAGE_KEY, JSON.stringify(
+        createAccountPreferenceDocument(state.settings, state.gridShotSettings, gridShotSessionType),
+      ));
+    }
+    return { gridShotSessionType };
+  }),
+  applyAccountPreferences: (value) => set((state) => applyAccountPreferenceDocument({
+    settings: state.settings,
+    gridShotSettings: state.gridShotSettings,
+    gridShotSessionType: state.gridShotSessionType,
+  }, value)),
+  restoreGuestPreferences: () => set((state) => applyAccountPreferenceDocument({
+    settings: state.settings,
+    gridShotSettings: state.gridShotSettings,
+    gridShotSessionType: state.gridShotSessionType,
+  }, load(GUEST_ACCOUNT_PREFERENCES_STORAGE_KEY, createAccountPreferenceDocument(
+    normalizedLoadedSettings,
+    loadedGridShotSettings,
+    loadedGridShotSessionType,
+  )))),
   saveResult: (r) =>
     set((s) => {
       const results = [r, ...s.results].slice(0, 30);
@@ -238,6 +318,21 @@ function openGridShotSession(sessionType: GridShotSessionType) {
     app.updateGridShotSettings(applyGridShotBenchmarkRules(app.gridShotSettings));
   }
   app.setPage("game");
+}
+
+function persistGridShotResult(record: GridShotHistoryRecord, authenticated: boolean) {
+  const app = useApp.getState();
+  const sessionType = record.sessionType ?? app.gridShotSessionType;
+  app.setGridSaveState({ sessionId: record.sessionId, status: "saving" });
+  void saveGridShotTrainingSession(record, app.gridShotSettings, sessionType, authenticated).then((result) => {
+    if (useApp.getState().gridSaveState.sessionId === result.sessionId) {
+      useApp.getState().setGridSaveState({
+        sessionId: result.sessionId,
+        serverSessionId: result.serverSessionId,
+        status: result.status,
+      });
+    }
+  });
 }
 
 function useInterfaceAudioFeedback(enabled: boolean) {
@@ -445,7 +540,7 @@ function TopNavigation() {
           <button type="button" className={`topbar-player-trigger ${authStatus === "authenticated" ? "" : "guest-direct"}`} onClick={handlePlayerTrigger} aria-expanded={authStatus === "authenticated" ? profileOpen : undefined} aria-haspopup={authStatus === "authenticated" ? "menu" : undefined}>
             {authUser
               ? <PlayerAvatar displayName={authUser.displayName} preset={authUser.avatarPreset} size="choice" />
-              : <span className="topbar-avatar-fallback"><Crosshair size={17} /></span>}
+              : <span className="topbar-avatar-fallback" aria-hidden="true"><UserRound size={18} strokeWidth={1.7} /></span>}
             <span className="topbar-player-name">{playerName}</span>
             {authStatus === "authenticated" && <ChevronDown className={profileOpen ? "open" : ""} size={15} />}
           </button>
@@ -511,7 +606,9 @@ function HomePage() {
   const setPage = useApp((s) => s.setPage);
   const settings = useApp((s) => s.settings);
   const gridShotSettings = useApp((s) => s.gridShotSettings);
-  const latest = useMemo(() => readHistory()[0] ?? null, []);
+  const currentResult = useApp((s) => s.gridResult);
+  const authenticated = useAuthStore((state) => state.status === "authenticated");
+  const latest = authenticated ? currentResult : null;
   return (
     <PageWrap title={tx("训练中枢", "Training lobby")} className="lobby-page">
       <motion.section
@@ -697,11 +794,45 @@ function ModesPage() {
 
   useEffect(() => {
     if (!selectedTraining) return;
+    const body = document.body;
+    const root = document.documentElement;
+    const scrollY = window.scrollY;
+    const previousBodyOverflow = body.style.overflow;
+    const previousBodyPaddingRight = body.style.paddingRight;
+    const previousBodyPosition = body.style.position;
+    const previousBodyTop = body.style.top;
+    const previousBodyLeft = body.style.left;
+    const previousBodyRight = body.style.right;
+    const previousBodyWidth = body.style.width;
+    const previousRootOverflow = root.style.overflow;
+    const scrollbarWidth = Math.max(0, window.innerWidth - root.clientWidth);
+    const bodyPaddingRight = Number.parseFloat(window.getComputedStyle(body).paddingRight) || 0;
+    body.classList.add("training-detail-open");
+    body.style.overflow = "hidden";
+    body.style.position = "fixed";
+    body.style.top = `-${scrollY}px`;
+    body.style.left = "0";
+    body.style.right = "0";
+    body.style.width = "100%";
+    root.style.overflow = "hidden";
+    if (scrollbarWidth > 0) body.style.paddingRight = `${bodyPaddingRight + scrollbarWidth}px`;
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") setSelectedTrainingId(null);
     };
     window.addEventListener("keydown", closeOnEscape);
-    return () => window.removeEventListener("keydown", closeOnEscape);
+    return () => {
+      window.removeEventListener("keydown", closeOnEscape);
+      body.classList.remove("training-detail-open");
+      body.style.overflow = previousBodyOverflow;
+      body.style.paddingRight = previousBodyPaddingRight;
+      body.style.position = previousBodyPosition;
+      body.style.top = previousBodyTop;
+      body.style.left = previousBodyLeft;
+      body.style.right = previousBodyRight;
+      body.style.width = previousBodyWidth;
+      root.style.overflow = previousRootOverflow;
+      window.scrollTo({ top: scrollY, left: 0, behavior: "auto" });
+    };
   }, [selectedTraining]);
 
   return (
@@ -1122,7 +1253,6 @@ function GamePage() {
   const setGridShotSessionType = useApp((s) => s.setGridShotSessionType);
   const setPage = useApp((s) => s.setPage);
   const setGridResult = useApp((s) => s.setGridResult);
-  const setGridSaveState = useApp((s) => s.setGridSaveState);
   const authStatus = useAuthStore((state) => state.status);
   return (
     <GridShotTrainingPage
@@ -1139,13 +1269,8 @@ function GamePage() {
       }}
       onResult={(record) => {
         setGridResult(record);
-        setGridSaveState({ sessionId: record.sessionId, status: "saving" });
         setPage("results");
-        void saveGridShotTrainingSession(record, gridShotSettings, gridShotSessionType, authStatus === "authenticated").then((result) => {
-          if (useApp.getState().gridSaveState.sessionId === result.sessionId) {
-            useApp.getState().setGridSaveState({ sessionId: result.sessionId, serverSessionId: result.serverSessionId, status: result.status });
-          }
-        });
+        persistGridShotResult(record, authStatus === "authenticated");
       }}
     />
   );
@@ -1163,7 +1288,7 @@ function GridShotQaPage() {
     <div className="shell focused-shell result-shell">
       <div className="ambient-stars" aria-hidden="true"><i /><i /><i /></div>
       <div className="page">
-        <GridShotResultPage record={record} targetSize={gridShotSettings.targetSize} onAgain={() => { setRecord(undefined); setRun((value) => value + 1); }} onTrainingHome={() => setPage("modes")} />
+        <GridShotResultPage record={record} targetSize={gridShotSettings.targetSize} saveStatus="login-required" onAgain={() => { setRecord(undefined); setRun((value) => value + 1); }} onTrainingHome={() => setPage("modes")} onLoginToSave={() => undefined} />
       </div>
     </div>
   );
@@ -1233,14 +1358,14 @@ function LegacyEnhancedResults() {
   const current = useApp((s) => s.gridResult),
     previous = useApp((s) => s.previousGridResult),
     setPage = useApp((s) => s.setPage);
-  const r = current ?? readHistory()[0];
+  const r = current;
   if (!r)
     return (
       <PageWrap title="训练结算">
         <button onClick={() => setPage("home")}>返回主页</button>
       </PageWrap>
     );
-  const best = Math.max(...readHistory().map((x) => x.score)),
+  const best = r.score,
     delta = previous ? r.score - previous.score : 0;
   return (
     <PageWrap title="训练结算">
@@ -1279,7 +1404,7 @@ function LegacyEnhancedResults() {
           icon={Award}
           label="较上次成绩"
           value={`${delta >= 0 ? "+" : ""}${delta}`}
-          hint="成绩已保存到本机"
+          hint="本局训练结果"
         />
       </div>
       <section className="panel result-chart">
@@ -1318,7 +1443,34 @@ function LegacyEnhancedResults() {
   );
 }
 
-function Results(){const record=useApp(s=>s.gridResult),targetSize=useApp(s=>s.gridShotSettings.targetSize),saveState=useApp(s=>s.gridSaveState),setPage=useApp(s=>s.setPage);return <GridShotResultPage record={record} targetSize={targetSize} saveStatus={saveState.sessionId===record?.sessionId?saveState.status:"idle"} serverSessionId={saveState.sessionId===record?.sessionId?saveState.serverSessionId:undefined} onAgain={()=>setPage('game')} onTrainingHome={()=>setPage('modes')} onOpenSettings={()=>setPage('settings')}/>}
+function Results() {
+  const record = useApp((state) => state.gridResult);
+  const targetSize = useApp((state) => state.gridShotSettings.targetSize);
+  const saveState = useApp((state) => state.gridSaveState);
+  const setGridSaveState = useApp((state) => state.setGridSaveState);
+  const setPage = useApp((state) => state.setPage);
+  const authenticated = useAuthStore((state) => state.status === "authenticated");
+  const currentSaveState = saveState.sessionId === record?.sessionId ? saveState : { status: "idle" as const };
+  return (
+    <GridShotResultPage
+      record={record}
+      targetSize={targetSize}
+      saveStatus={currentSaveState.status}
+      serverSessionId={currentSaveState.serverSessionId}
+      onAgain={() => setPage("game")}
+      onTrainingHome={() => setPage("modes")}
+      onOpenSettings={() => setPage("settings")}
+      onLoginToSave={currentSaveState.status === "login-required" ? () => {
+        if (!record) return;
+        setGridSaveState({ sessionId: record.sessionId, status: "login-required", loginRequested: true });
+        setPage("profile");
+      } : undefined}
+      onRetrySave={authenticated && currentSaveState.status === "failed" && record
+        ? () => persistGridShotResult(record, true)
+        : undefined}
+    />
+  );
+}
 void LegacyEnhancedResults;
 function LegacySettingsPage() {
   const s = useApp((x) => x.settings),
@@ -1586,18 +1738,36 @@ function AccountAccessPage() {
 
 function App() {
   const page = useApp((s) => s.page);
-  const language = useApp((s) => s.settings.language);
+  const settings = useApp((s) => s.settings);
+  const language = settings.language;
+  const gridShotSettings = useApp((s) => s.gridShotSettings);
+  const gridShotSessionType = useApp((s) => s.gridShotSessionType);
   const careerTargetSize = useApp((s) => s.gridShotSettings.targetSize);
   const setPage = useApp((s) => s.setPage);
+  const applyAccountPreferences = useApp((s) => s.applyAccountPreferences);
+  const restoreGuestPreferences = useApp((s) => s.restoreGuestPreferences);
   const initializeAuth = useAuthStore((s) => s.initialize);
   const authStatus = useAuthStore((s) => s.status);
+  const authUserId = useAuthStore((s) => s.user?.id);
+  const previousAuthStatus = useRef(authStatus);
   const reduceMotion = useReducedMotion();
+  const accountPreferences = useMemo(
+    () => createAccountPreferenceDocument(settings, gridShotSettings, gridShotSessionType),
+    [gridShotSessionType, gridShotSettings, settings],
+  );
+  useAccountPreferencesSync({
+    authenticated: authStatus === "authenticated",
+    userId: authUserId,
+    document: accountPreferences,
+    applyRemote: applyAccountPreferences,
+  });
   useInterfaceAudioFeedback(page !== "game" && page !== "qa");
   setAppLanguage(language);
   useEffect(() => {
     document.documentElement.lang = language;
   }, [language]);
   useEffect(() => {
+    clearRetiredLocalTrainingData();
     void initializeAuth();
   }, [initializeAuth]);
   useEffect(() => {
@@ -1613,25 +1783,21 @@ function App() {
     };
   }, [authStatus, initializeAuth]);
   useEffect(() => {
+    const previous = previousAuthStatus.current;
+    previousAuthStatus.current = authStatus;
+    if (previous !== "authenticated" || authStatus === "authenticated") return;
+    useApp.getState().setGridResult(undefined);
+    useApp.getState().setGridSaveState({ status: "idle" });
+    restoreGuestPreferences();
+  }, [authStatus, restoreGuestPreferences]);
+  useEffect(() => {
     if (authStatus !== "authenticated") return;
-    let active = true;
-    const sync = () => {
-      void syncPendingTrainingSessions().then((result) => {
-        if (!active) return;
-        const current = useApp.getState().gridSaveState;
-        if (current.sessionId && result.syncedSessionIds.includes(current.sessionId)) {
-          useApp.getState().setGridSaveState({ sessionId: current.sessionId, serverSessionId: result.serverSessionIds[current.sessionId], status: "saved-cloud" });
-        }
-      });
-    };
-    sync();
-    window.addEventListener("online", sync);
-    window.addEventListener("focus", sync);
-    return () => {
-      active = false;
-      window.removeEventListener("online", sync);
-      window.removeEventListener("focus", sync);
-    };
+    const app = useApp.getState();
+    const pending = app.gridSaveState;
+    const record = app.gridResult;
+    if (!record || !pending.loginRequested || pending.status !== "login-required" || pending.sessionId !== record.sessionId) return;
+    app.setPage("results");
+    persistGridShotResult(record, true);
   }, [authStatus]);
   useEffect(() => {
     if (page === "profile") window.scrollTo({ top: 0, left: 0, behavior: "instant" });
@@ -1667,9 +1833,14 @@ function App() {
             <ModesPage />
           ) : page === "progress" ? (
             <CareerPage
-              targetSize={careerTargetSize}
-              onStartBenchmark={() => openGridShotSession("benchmark")}
+              key={authUserId ?? authStatus}
+              projectSettings={{ "grid-shot": { targetSize: careerTargetSize } }}
+              onStartTraining={(projectId, entryId) => {
+                if (projectId === "grid-shot") openGridShotSession(entryId === "benchmark" ? "benchmark" : "practice");
+                else setPage("modes");
+              }}
               onBrowseTraining={() => setPage("modes")}
+              onLogin={() => setPage("profile")}
             />
           ) : page === "workshop" || page === "ranking" ? (
             <FutureHubPage kind={page} />

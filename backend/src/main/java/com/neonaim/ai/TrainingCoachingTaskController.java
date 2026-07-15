@@ -26,13 +26,13 @@ class TrainingCoachingTaskController {
 
 	@GetMapping
 	ApiResponse<TrainingCoachingTaskService.TaskView> latest(@AuthenticationPrincipal Jwt jwt,
-			@PathVariable @Pattern(regexp = "grid-shot") String trainingId) {
+			@PathVariable @Pattern(regexp = "[a-z0-9][a-z0-9-]{0,63}") String trainingId) {
 		return ApiResponse.success(service.latest(userId(jwt), trainingId));
 	}
 
 	@PostMapping
 	ApiResponse<TrainingCoachingTaskService.TaskView> adopt(@AuthenticationPrincipal Jwt jwt,
-			@PathVariable @Pattern(regexp = "grid-shot") String trainingId,
+			@PathVariable @Pattern(regexp = "[a-z0-9][a-z0-9-]{0,63}") String trainingId,
 			@Valid @RequestBody AdoptRequest request) {
 		return ApiResponse.success(service.adopt(userId(jwt), trainingId, request.analysisCallId()),
 				"训练目标已启用");

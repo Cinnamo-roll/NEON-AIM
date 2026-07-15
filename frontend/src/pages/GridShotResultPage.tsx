@@ -7,6 +7,8 @@ import {
   Crosshair,
   ListChecks,
   LoaderCircle,
+  LogIn,
+  RefreshCw,
   Settings2,
   Sparkles,
   Target,
@@ -15,7 +17,7 @@ import {
 } from "lucide-react";
 import { Bar, CartesianGrid, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import type { TrainingAnalysisTarget } from "../game/analysis/trainingAnalysis";
-import { activeModelProvider, readModelApiSettings } from "../game/analysis/modelApiSettings";
+import { canUseGridShotAiAnalysis } from "../game/analysis/gridShotAiAccess";
 import {
   getTrainingAiAnalysis,
   triggerTrainingAiAnalysis,
@@ -68,26 +70,32 @@ export function GridShotResultPage({
   serverSessionId,
   onTrainingHome,
   onOpenSettings,
+  onLoginToSave,
+  onRetrySave,
+  backLabel,
 }: {
   record?: GridShotHistoryRecord;
   targetSize?: GridShotTargetSize;
   saveStatus?: TrainingSessionSaveStatus;
   serverSessionId?: string;
-  onAgain: () => void;
+  onAgain?: () => void;
   onTrainingHome: () => void;
   onOpenSettings?: () => void;
+  onLoginToSave?: () => void;
+  onRetrySave?: () => void;
+  backLabel?: readonly [string, string];
 }) {
   const isAdmin = useAuthStore((state) => state.user?.role === "ADMIN");
+  const authStatus = useAuthStore((state) => state.status);
+  const isAuthenticated = authStatus === "authenticated";
   const bundle = useMemo(
     () => record ? buildGridShotAnalysisBundle(record, { targetSize }) : undefined,
     [record, targetSize],
   );
   const coach = bundle ? buildGridShotRuleAnalysis(bundle.aiSnapshot) : undefined;
-  const [apiSettings] = useState(() => readModelApiSettings());
   const [aiJob, setAiJob] = useState<TrainingAiJob>();
   const [aiError, setAiError] = useState("");
   const [coachingTask, setCoachingTask] = useState<TrainingCoachingTask | null>(null);
-  const activeApiConfig = activeModelProvider(apiSettings);
   const resultSessionType = record?.sessionType ?? (record && isGridShotBenchmarkSettings({
     duration: record.duration,
     targetSize,
@@ -95,7 +103,7 @@ export function GridShotResultPage({
   const benchmarkResult = resultSessionType === "benchmark";
 
   useEffect(() => {
-    if (!isAdmin || !serverSessionId) return;
+    if (!isAuthenticated || !serverSessionId) return;
     let active = true;
     void getTrainingAiAnalysis(serverSessionId).then((job) => {
       if (!active) return;
@@ -104,7 +112,7 @@ export function GridShotResultPage({
       if (active) setAiError(tx("暂时无法读取 AI 分析状态", "Could not load AI analysis status"));
     });
     return () => { active = false; };
-  }, [isAdmin, serverSessionId]);
+  }, [isAuthenticated, serverSessionId]);
 
   useEffect(() => {
     if (!isAdmin || !serverSessionId) {
@@ -121,7 +129,7 @@ export function GridShotResultPage({
   }, [isAdmin, serverSessionId]);
 
   useEffect(() => {
-    if (!isAdmin || !serverSessionId || aiJob?.status !== "PENDING") return;
+    if (!isAuthenticated || !serverSessionId || aiJob?.status !== "PENDING") return;
     let active = true;
     const timer = window.setInterval(() => {
       void getTrainingAiAnalysis(serverSessionId).then((job) => {
@@ -135,7 +143,7 @@ export function GridShotResultPage({
       active = false;
       window.clearInterval(timer);
     };
-  }, [aiJob?.status, isAdmin, serverSessionId]);
+  }, [aiJob?.status, isAuthenticated, serverSessionId]);
 
   if (!record || !bundle || !coach) {
     return (
@@ -157,7 +165,7 @@ export function GridShotResultPage({
     : aiConfidence === "DEVELOPING"
       ? tx("初步趋势", "Early trend")
       : tx("单局观察", "Single-session view");
-  const canGenerateAi = Boolean(isAdmin && serverSessionId && activeApiConfig.apiKey.trim() && !aiPending);
+  const canGenerateAi = canUseGridShotAiAnalysis(authStatus, serverSessionId, aiPending);
   const coachingAttempt = coachingTask?.progress.attempts.find((attempt) => attempt.sessionId === serverSessionId) ?? null;
   const coachingCycleFinished = coachingTask?.status === "COMPLETED"
     && coachingTask.evaluation?.sessionId === serverSessionId
@@ -168,15 +176,10 @@ export function GridShotResultPage({
     ? coachingTask?.progress.attempts.findIndex((attempt) => attempt.sessionId === coachingAttempt.sessionId) ?? -1
     : -1;
   const triggerAi = async () => {
-    if (!isAdmin || !serverSessionId || !activeApiConfig.apiKey.trim() || aiPending) return;
+    if (!isAuthenticated || !serverSessionId || aiPending) return;
     setAiError("");
     try {
-      const job = await triggerTrainingAiAnalysis(
-        serverSessionId,
-        apiSettings.activeProvider,
-        activeApiConfig.apiKey,
-        activeApiConfig.model,
-      );
+      const job = await triggerTrainingAiAnalysis(serverSessionId);
       setAiJob(job);
     } catch (error) {
       setAiError(error instanceof Error ? error.message : tx("AI 教练解读请求失败", "AI coaching request failed"));
@@ -184,13 +187,31 @@ export function GridShotResultPage({
   };
 
   const saveCopy: Record<TrainingSessionSaveStatus, [string, string]> = {
-    idle: ["本局成绩已记录", "Session recorded"],
+    idle: ["本局成绩仅在当前页面可见", "This result is available only on the current page"],
     saving: ["正在保存本局数据…", "Saving this session…"],
     "saved-cloud": ["已保存到生涯", "Saved to career"],
-    "saved-local": ["已保存到本机，登录后自动同步", "Saved locally and ready to sync after sign-in"],
-    "pending-sync": ["已保存到本机，网络恢复后自动同步", "Saved locally and waiting for connection"],
-    failed: ["暂时未保存，请保留此页面", "Not saved yet; keep this page open"],
+    "login-required": ["访客成绩未保存，登录后可保留本局", "Guest result not saved; sign in to keep this session"],
+    failed: ["云端保存失败；离开页面后本局不会保留", "Cloud save failed; this session will be lost after leaving the page"],
   };
+  const sessionTypeCopy: readonly [string, string] = benchmarkResult
+    ? saveStatus === "saved-cloud"
+      ? ["基准训练 · 已计入生涯基线", "Benchmark · added to your career baseline"]
+      : saveStatus === "login-required"
+        ? ["基准训练 · 登录后才能计入生涯", "Benchmark · sign in to add it to Career"]
+        : saveStatus === "saving"
+          ? ["基准训练 · 正在保存", "Benchmark · saving"]
+          : saveStatus === "failed"
+            ? ["基准训练 · 尚未计入生涯", "Benchmark · not added to Career"]
+            : ["基准训练", "Benchmark"]
+    : saveStatus === "saved-cloud"
+      ? ["自由练习 · 已保存到生涯", "Free practice · saved to Career"]
+      : saveStatus === "login-required"
+        ? ["自由练习 · 登录后可保留记录", "Free practice · sign in to keep this result"]
+        : saveStatus === "saving"
+          ? ["自由练习 · 正在保存", "Free practice · saving"]
+          : saveStatus === "failed"
+            ? ["自由练习 · 尚未保存", "Free practice · not saved"]
+            : ["自由练习", "Free practice"];
   const scoreParts = [
     { label: tx("基础命中", "Base hits"), value: record.baseScoreTotal, tone: "base" },
     { label: tx("速度奖励", "Speed bonus"), value: record.speedBonusTotal, tone: "speed" },
@@ -240,7 +261,7 @@ export function GridShotResultPage({
     <main className="result-page result-page-detailed result-workbench result-workbench-v3 session-review-page" data-grade={record.grade}>
       <section className="result-command-deck result-workbench-deck session-review-shell">
         <nav className="result-review-topbar" aria-label={tx("复盘页面导航", "Review navigation")}>
-          <button type="button" onClick={onTrainingHome}><ArrowLeft />{tx("返回训练列表", "Back to training list")}</button>
+          <button type="button" onClick={onTrainingHome}><ArrowLeft />{backLabel ? tx(...backLabel) : tx("返回训练列表", "Back to training list")}</button>
         </nav>
         <section className="result-scoreboard result-scoreboard-v3">
           <header className="result-workbench-hero">
@@ -250,7 +271,7 @@ export function GridShotResultPage({
                 <small>{tx(`GRID SHOT · ${record.duration} 秒 · ${tx(...targetSizeLabels[targetSize])}`, `GRID SHOT · ${record.duration}s · ${tx(...targetSizeLabels[targetSize])}`)}</small>
                 <h1>{tx("本局复盘", "Session review")}</h1>
                 <p className="result-save-status" data-state={saveStatus}>{tx(...saveCopy[saveStatus])}</p>
-                {record && <span className="result-benchmark-status" data-session-type={resultSessionType}>{benchmarkResult ? <Target size={12} /> : <Settings2 size={12} />}{benchmarkResult ? tx("基准训练 · 已计入生涯基线", "Benchmark · added to your career baseline") : tx("自由练习 · 不影响生涯基线", "Free practice · career baseline unchanged")}</span>}
+                {record && <span className="result-benchmark-status" data-session-type={resultSessionType}>{benchmarkResult ? <Target size={12} /> : <Settings2 size={12} />}{tx(...sessionTypeCopy)}</span>}
               </div>
             </div>
             <div className="result-workbench-score">
@@ -258,6 +279,22 @@ export function GridShotResultPage({
               <span><small>{tx("评级", "Grade")}</small><b aria-label={tx(`评级 ${record.grade}`, `Grade ${record.grade}`)}>{record.grade}</b></span>
             </div>
           </header>
+          {(saveStatus === "login-required" || saveStatus === "failed") && (
+            <div className="result-save-gate" data-state={saveStatus}>
+              <span>{saveStatus === "login-required" ? <LogIn /> : <RefreshCw />}</span>
+              <div>
+                <b>{saveStatus === "login-required" ? tx("登录后保存本局成绩", "Sign in to save this session") : tx("这局还没有保存到云端", "This session has not reached the cloud")}</b>
+                <small>{saveStatus === "login-required"
+                  ? tx("保存后会计入生涯记录，并可立即使用 AI 单局分析。", "Once saved, it will count toward Career and unlock AI session analysis.")
+                  : tx("重试成功后会计入生涯记录，并恢复本局 AI 分析。", "After a successful retry, it will count toward Career and restore AI analysis.")}</small>
+              </div>
+              {saveStatus === "login-required" && onLoginToSave
+                ? <button type="button" onClick={onLoginToSave}>{tx("登录并保存", "Sign in and save")}<LogIn /></button>
+                : saveStatus === "failed" && onRetrySave
+                  ? <button type="button" onClick={onRetrySave}>{tx("重试保存", "Retry save")}<RefreshCw /></button>
+                  : null}
+            </div>
+          )}
           <div className="result-workbench-metrics" aria-label={tx("本局核心数据", "Core session data")}>
             <article><Crosshair /><div><small>{tx("准确率", "Accuracy")}</small><b>{record.accuracy.toFixed(1)}%</b><em>{tx(`${record.hits} 命中 · ${record.misses} 失误`, `${record.hits} hits · ${record.misses} misses`)}</em></div></article>
             <article><Zap /><div><small>{tx("命中速度", "Hit pace")}</small><b>{record.targetsPerMinute.toFixed(1)}</b><em>{tx("次 / 分钟", "hits per minute")}</em></div></article>
@@ -358,28 +395,32 @@ export function GridShotResultPage({
           </div>
         </section>
 
-        {isAdmin && <section className="result-ai-stage" data-state={aiJob?.status ?? "NOT_REQUESTED"} data-expanded={Boolean(aiAnalysis)}>
+        <section className="result-ai-stage" data-state={!isAuthenticated ? "LOGIN_REQUIRED" : aiJob?.status ?? "NOT_REQUESTED"} data-expanded={Boolean(aiAnalysis)}>
           <header className="result-ai-stage-header">
             <div>{aiPending ? <LoaderCircle className="spin" /> : <BrainCircuit />}<span><small>{tx("AI 复盘", "AI review")}</small></span></div>
-            {(aiAnalysis || aiJob?.status === "FAILED" || aiJob?.status === "BUDGET_EXHAUSTED") && <em>{aiAnalysis ? tx("已完成", "Ready") : tx("分析失败", "Unavailable")}</em>}
+            {!isAuthenticated
+              ? <em>{tx("登录后可用", "Sign-in required")}</em>
+              : (aiAnalysis || aiJob?.status === "FAILED" || aiJob?.status === "BUDGET_EXHAUSTED") && <em>{aiAnalysis ? tx("已完成", "Ready") : tx("分析失败", "Unavailable")}</em>}
           </header>
           <div className="result-ai-stage-body">
             <div className="result-ai-stage-summary">
               {aiAnalysis && <div className="result-ai-confidence" data-level={aiConfidence}><b>{aiConfidenceLabel}</b></div>}
-              <h2>{aiAnalysis
+              <h2>{!isAuthenticated
+                ? tx("登录后解锁 AI 单局分析", "Sign in to unlock AI session analysis")
+                : aiAnalysis
                 ? aiAnalysis.headline
                 : aiPending
                   ? tx("正在整理你的训练建议", "Preparing your coaching notes")
                   : aiJob?.status === "FAILED" || aiJob?.status === "BUDGET_EXHAUSTED"
                     ? tx("这次分析没有完成", "The analysis could not be completed")
                     : tx("要不要让 AI 再看一遍这局？", "Want AI to take another look at this session?")}</h2>
-              <p>{aiAnalysis
+              <p>{!isAuthenticated
+                ? tx("AI 会结合本局表现和近期同配置记录，补充规则复盘没有覆盖的细节。登录并保存本局后即可使用。", "AI adds details beyond the rule review using this session and recent matching records. Sign in and save to use it.")
+                : aiAnalysis
                 ? aiAnalysis.summary
                 : aiPending
                   ? tx("完成后会在这里直接给出结论和下一步练法。", "The conclusion and next step will appear here when ready.")
-                  : aiJob?.failureMessage || aiError || (!activeApiConfig.apiKey.trim()
-                    ? tx("配置好模型后，AI 会补充规则复盘没覆盖的细节，并参考近期同配置训练。", "Once configured, AI will add details not covered by the rule review and use recent matching sessions when available.")
-                    : !serverSessionId
+                  : aiJob?.failureMessage || aiError || (!serverSessionId
                       ? tx("本局保存完成后，AI 可以补充规则复盘没覆盖的细节。", "Once this session is saved, AI can add details not covered by the rule review.")
                       : tx("它会补充规则复盘没覆盖的细节，并参考最近 5 局同配置训练。", "It will add details not covered by the rule review and reference the five most recent matching sessions."))}</p>
               {aiAnalysis && <div className="result-ai-stage-focus"><Target /><span><small>{tx("建议你接下来", "Recommended next step")}</small><b>{aiAnalysis.nextAction.title}</b><p>{aiAnalysis.nextAction.description}</p></span></div>}
@@ -389,12 +430,15 @@ export function GridShotResultPage({
             </div>}
           </div>
           <footer className="result-ai-stage-footer">
-            {aiAnalysis && <small>{aiJob?.cacheHit ? tx("已使用本局现有建议，没有新增消耗", "Reused the existing coaching note with no added usage") : tx(`${(aiJob?.inputTokens ?? 0) + (aiJob?.outputTokens ?? 0)} Token · ${aiJob?.model ?? activeApiConfig.model}`, `${(aiJob?.inputTokens ?? 0) + (aiJob?.outputTokens ?? 0)} tokens · ${aiJob?.model ?? activeApiConfig.model}`)}</small>}
-            {!activeApiConfig.apiKey.trim() && onOpenSettings
-              ? <button type="button" onClick={onOpenSettings}><Settings2 />{tx("设置 AI 分析", "Set up AI analysis")}</button>
-              : <button type="button" disabled={!canGenerateAi} onClick={() => void triggerAi()}>{aiPending ? <LoaderCircle className="spin" /> : <Sparkles />}{aiAnalysis ? tx("重新分析", "Analyze again") : tx("让 AI 分析这局", "Analyze this session")}</button>}
+            {aiAnalysis && <small>{aiJob?.cacheHit ? tx("已使用本局现有建议，没有新增消耗", "Reused the existing coaching note with no added usage") : tx(`${(aiJob?.inputTokens ?? 0) + (aiJob?.outputTokens ?? 0)} Token · ${aiJob?.model ?? "AI"}`, `${(aiJob?.inputTokens ?? 0) + (aiJob?.outputTokens ?? 0)} tokens · ${aiJob?.model ?? "AI"}`)}</small>}
+            {!isAuthenticated
+              ? <button type="button" disabled={!onLoginToSave} onClick={onLoginToSave}><LogIn />{tx("登录并解锁 AI 分析", "Sign in to unlock AI analysis")}</button>
+              : <div className="result-ai-stage-actions">
+                  {isAdmin && aiError && onOpenSettings && <button type="button" className="secondary" onClick={onOpenSettings}><Settings2 />{tx("检查 AI 配置", "Check AI settings")}</button>}
+                  <button type="button" disabled={!canGenerateAi} onClick={() => void triggerAi()}>{aiPending ? <LoaderCircle className="spin" /> : <Sparkles />}{!serverSessionId ? tx("等待本局保存", "Waiting for save") : aiAnalysis ? tx("重新分析", "Analyze again") : tx("让 AI 分析这局", "Analyze this session")}</button>
+                </div>}
           </footer>
-        </section>}
+        </section>
 
       </section>
     </main>

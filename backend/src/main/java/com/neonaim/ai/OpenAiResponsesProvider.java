@@ -1,6 +1,5 @@
 package com.neonaim.ai;
 
-import com.neonaim.training.api.TrainingAnalysisSnapshot;
 import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -18,31 +17,6 @@ import tools.jackson.databind.ObjectMapper;
 final class OpenAiResponsesProvider implements TrainingAnalysisProvider {
 
 	private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(30);
-	private static final String INSTRUCTIONS = """
-			You are NEON AIM's Grid Shot coach. Analyze only the compact evidence supplied by the app.
-			Never invent mouse movement, target positions, reaction time, or events that are not present.
-			Respond in concise Simplified Chinese. First check for a clearly evidenced strength. When one exists,
-			headline and summary must acknowledge it before any weakness, and the first finding must be POSITIVE.
-			Then give at most one main improvement backed by numbers and one measurable next-run goal. Do not invent
-			a flaw just to provide advice; for an excellent run, the next step may preserve the strength or add a small challenge.
-			Return no more than two findings and two targets.
-			""";
-	private static final String CAREER_INSTRUCTIONS = """
-
-			For CAREER scope, windows are recent sessions ordered oldest to newest. If comparableSampleSize is below 5,
-			call the result an initial observation. If configurations are mixed, never claim improvement or decline
-			between different durations or target sizes. Only a same-configuration comparison can support a trend claim.
-			Use scorePerMinute rather than raw score across durations.
-			When configurationKey is grid-shot:60s:medium and BENCHMARK_BASELINE is present, the input is already limited
-			to the standard benchmark and may be analyzed as one comparable baseline.
-			""";
-	private static final String SESSION_INSTRUCTIONS = """
-
-			For SESSION scope, comparison contains at most five recent valid sessions with the same configuration and rule versions.
-			With no comparison or fewer than two samples, analyze only the current session. Call two to four samples an early trend,
-			and only call a comparison established when sampleSize reaches five. Never present within-session phase variation as a long-term trend.
-			""";
-
 	private final HttpClient httpClient;
 	private final ObjectMapper objectMapper;
 	private final URI endpoint;
@@ -60,7 +34,7 @@ final class OpenAiResponsesProvider implements TrainingAnalysisProvider {
 
 	@Override
 	public AnalysisResult analyze(AnalysisRequest request) {
-		String body = requestBody(request.snapshot(), request.budget());
+		String body = requestBody(request);
 		HttpRequest httpRequest = HttpRequest.newBuilder(endpoint)
 				.timeout(REQUEST_TIMEOUT)
 				.header("Authorization", "Bearer " + apiKey)
@@ -108,16 +82,16 @@ final class OpenAiResponsesProvider implements TrainingAnalysisProvider {
 		return "openai-responses:" + model;
 	}
 
-	private String requestBody(TrainingAnalysisSnapshot snapshot, TrainingAnalysisPolicy.TokenBudget budget) {
+	private String requestBody(AnalysisRequest analysisRequest) {
 		try {
 			Map<String, Object> request = new LinkedHashMap<>();
 			request.put("model", model);
-			request.put("instructions", INSTRUCTIONS
-					+ (snapshot.scope() == TrainingAnalysisSnapshot.Scope.CAREER ? CAREER_INSTRUCTIONS : SESSION_INSTRUCTIONS));
-			request.put("input", objectMapper.writeValueAsString(snapshot));
-			request.put("max_output_tokens", budget.maxOutputTokens());
+			request.put("instructions", analysisRequest.prompt().instructions());
+			request.put("input", objectMapper.writeValueAsString(analysisRequest.snapshot()));
+			request.put("max_output_tokens", analysisRequest.budget().maxOutputTokens());
 			request.put("store", false);
-			request.put("text", Map.of("format", responseFormat()));
+			request.put("text", Map.of("format", responseFormat(
+					analysisRequest.prompt().supportedTargetMetrics())));
 			return objectMapper.writeValueAsString(request);
 		}
 		catch (JacksonException exception) {
@@ -219,7 +193,7 @@ final class OpenAiResponsesProvider implements TrainingAnalysisProvider {
 		return new ModelProviderException(code, truncate(providerMessage, 300));
 	}
 
-	private static Map<String, Object> responseFormat() {
+	private static Map<String, Object> responseFormat(java.util.Set<String> supportedTargetMetrics) {
 		Map<String, Object> finding = objectSchema(Map.of(
 				"code", stringSchema(),
 				"severity", enumSchema("POSITIVE", "OPPORTUNITY", "WARNING"),
@@ -228,8 +202,7 @@ final class OpenAiResponsesProvider implements TrainingAnalysisProvider {
 				"advice", stringSchema()),
 				List.of("code", "severity", "title", "evidence", "advice"));
 		Map<String, Object> target = objectSchema(Map.of(
-				"metric", enumSchema("accuracy", "consistencyScore", "targetsPerMinute",
-						"averageHitInterval", "lastPhaseAccuracy", "maxCombo"),
+				"metric", Map.of("type", "string", "enum", supportedTargetMetrics.stream().sorted().toList()),
 				"label", stringSchema(),
 				"operator", enumSchema("AT_LEAST", "AT_MOST"),
 				"value", Map.of("type", "number"),
@@ -246,7 +219,7 @@ final class OpenAiResponsesProvider implements TrainingAnalysisProvider {
 				"findings", Map.of("type", "array", "items", finding, "minItems", 1, "maxItems", 3),
 				"nextAction", nextAction),
 				List.of("headline", "summary", "findings", "nextAction"));
-		return Map.of("type", "json_schema", "name", "grid_shot_analysis", "strict", true, "schema", schema);
+		return Map.of("type", "json_schema", "name", "training_analysis", "strict", true, "schema", schema);
 	}
 
 	private static Map<String, Object> objectSchema(Map<String, Object> properties, List<String> required) {

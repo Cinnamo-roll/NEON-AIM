@@ -121,10 +121,6 @@ function PreviewTarget({
           <torusGeometry args={[0.455, 0.018, 8, 40]} />
           <meshBasicMaterial color="#e9ffff" transparent opacity={0.68} toneMapped={false} />
         </mesh>
-        <mesh position={[0, 0, 0.07]} raycast={() => undefined}>
-          <torusGeometry args={[0.55, 0.01, 6, 40]} />
-          <meshBasicMaterial color="#65dce7" transparent opacity={0.12} depthWrite={false} toneMapped={false} />
-        </mesh>
       </group>
       <mesh ref={impactCore} position={[0, 0, 0.092]} visible={false} raycast={() => undefined}>
         <circleGeometry args={[0.48, 40]} />

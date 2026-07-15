@@ -16,6 +16,10 @@ import tools.jackson.databind.ObjectMapper;
 
 class OpenAiResponsesProviderTests {
 
+	private static TrainingAiAnalysisStrategy.PromptSpec prompt() {
+		return new GridShotTrainingAiAnalysisStrategy().prompt(TrainingAnalysisSnapshot.Scope.SESSION);
+	}
+
 	@Test
 	void sendsOnlyTheCompactSnapshotAndParsesStructuredOutput() throws Exception {
 		ObjectMapper objectMapper = new ObjectMapper();
@@ -60,7 +64,7 @@ class OpenAiResponsesProviderTests {
 			OpenAiResponsesProvider provider = new OpenAiResponsesProvider(HttpClient.newHttpClient(), objectMapper,
 					"http://127.0.0.1:" + server.getAddress().getPort() + "/v1/responses", "sk-local-test-key", "gpt-4o-mini");
 			TrainingAnalysisProvider.AnalysisResult result = provider.analyze(new TrainingAnalysisProvider.AnalysisRequest(
-					snapshot(), new TrainingAnalysisPolicy.TokenBudget(900, 260), "grid-shot-session-v1"));
+					snapshot(), new TrainingAnalysisPolicy.TokenBudget(900, 260), prompt()));
 
 			assertThat(result.headline()).isEqualTo("先稳定后段准确率");
 			assertThat(result.findings()).hasSize(1);
@@ -103,7 +107,7 @@ class OpenAiResponsesProviderTests {
 
 			ModelProviderException exception = catchThrowableOfType(ModelProviderException.class, () -> provider.analyze(
 					new TrainingAnalysisProvider.AnalysisRequest(snapshot(),
-							new TrainingAnalysisPolicy.TokenBudget(900, 420), "grid-shot-session-v2")));
+							new TrainingAnalysisPolicy.TokenBudget(900, 420), prompt())));
 
 			assertThat(exception.code()).isEqualTo("AI_RESPONSE_INCOMPLETE");
 			assertThat(exception.usage()).isEqualTo(new TrainingAnalysisProvider.TokenUsage(330, 420));

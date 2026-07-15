@@ -1,5 +1,4 @@
 import { authenticatedRequest } from "../../features/auth/authApi";
-import type { ModelProviderId } from "./modelApiSettings";
 import type { TrainingAnalysisResult } from "./trainingAnalysis";
 
 export type TrainingCareerAiConfidence = "INITIAL" | "LOW" | "STABLE";
@@ -27,15 +26,9 @@ export interface TrainingCareerAiJob {
   completedAt: string | null;
 }
 
-export async function triggerTrainingCareerAiAnalysis(
-  trainingId: "grid-shot",
-  provider: ModelProviderId,
-  apiKey: string,
-  model: string,
-) {
+export async function triggerTrainingCareerAiAnalysis(trainingId: "grid-shot") {
   const response = await authenticatedRequest<TrainingCareerAiJob>(`/api/training/career/${trainingId}/ai-analysis`, {
     method: "POST",
-    body: JSON.stringify({ provider, apiKey, model }),
   });
   return response.data;
 }

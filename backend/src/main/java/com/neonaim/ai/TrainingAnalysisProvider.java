@@ -18,14 +18,12 @@ public interface TrainingAnalysisProvider {
 	String providerId();
 
 	record AnalysisRequest(TrainingAnalysisSnapshot snapshot, TrainingAnalysisPolicy.TokenBudget budget,
-			String promptVersion) {
+			TrainingAiAnalysisStrategy.PromptSpec prompt) {
 
 		public AnalysisRequest {
 			Objects.requireNonNull(snapshot, "snapshot");
 			Objects.requireNonNull(budget, "budget");
-			if (promptVersion == null || promptVersion.isBlank()) {
-				throw new IllegalArgumentException("promptVersion must not be blank");
-			}
+			Objects.requireNonNull(prompt, "prompt");
 		}
 	}
 

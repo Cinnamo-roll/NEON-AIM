@@ -47,7 +47,7 @@ function buildFindings(snapshot: TrainingSessionAnalysisSnapshot, trend: PhaseTr
       severity: "WARNING",
       title: tx("本局数据需要复核", "This session needs a data review"),
       evidence: tx("事件顺序或计分汇总未通过完整性检查。", "The event sequence or score totals did not pass integrity checks."),
-      advice: tx("先保留记录，不把本局用于 AI 深度分析或长期趋势基线。", "Keep the record, but exclude it from deep AI analysis and long-term baselines."),
+      advice: tx("先复核输入和计分完整性，不把本局用于 AI 深度分析或长期趋势基线。", "Review input and scoring integrity before using this session for deep AI analysis or long-term baselines."),
     });
   }
   if (snapshot.integrity.passed && summary.accuracy >= 90 && summary.consistencyScore >= 75) {
