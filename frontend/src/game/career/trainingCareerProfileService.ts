@@ -27,22 +27,17 @@ export interface TrainingCareerProfile {
   profileVersion: string;
   dataVersion: string;
   trainingId: string;
-  benchmark: {
+  cohort: {
     configurationKey: string;
     modeVersion: number;
     scoringVersion: number;
-    durationSeconds: number;
-    targetSize: string;
-    activeTargets: number;
-  };
+  } | null;
   sample: {
     totalSessions: number;
     validSessions: number;
-    benchmarkSessions: number;
-    freePracticeSessions: number;
+    comparableSessions: number;
+    configurationCount: number;
     confidence: TrainingCareerProfileConfidence;
-    nextMilestone: number;
-    remaining: number;
   };
   coverage: {
     availableDimensions: number;

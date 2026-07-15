@@ -82,24 +82,23 @@ export function GridShotModeSettingsPanel({ settings, sessionType, onApply, onSe
           <header className="grid-shot-session-type-heading">
             <div>
               <small>{tx("本局模式", "Session mode")}</small>
-              <b>{tx("决定本局成绩是否计入生涯基线", "Controls whether this result affects your career baseline")}</b>
             </div>
           </header>
           <div className="grid-shot-session-type-options" role="group" aria-label={tx("选择训练类型", "Choose training type")}>
             <button type="button" data-session-type="benchmark" className={draftSessionType === "benchmark" ? "active" : ""} aria-pressed={draftSessionType === "benchmark"} onClick={() => selectSessionType("benchmark")}>
-              <Target size={18} /><span><b>{tx("基准训练", "Benchmark")}</b><small>{tx("固定规则 · 计入生涯基线", "Fixed rules · counts toward baseline")}</small></span>
+              <Target size={18} /><span><b>{tx("基准训练", "Benchmark")}</b><small>{tx("固定规则 · 保留标准配置", "Fixed rules · standard setup")}</small></span>
             </button>
             <button type="button" data-session-type="practice" className={draftSessionType === "practice" ? "active" : ""} aria-pressed={draftSessionType === "practice"} onClick={() => selectSessionType("practice")}>
-              <Settings2 size={18} /><span><b>{tx("自由练习", "Free practice")}</b><small>{tx("自定义规则 · 不影响生涯基线", "Custom rules · no baseline impact")}</small></span>
+              <Settings2 size={18} /><span><b>{tx("自由练习", "Free practice")}</b><small>{tx("自定义规则 · 同样进入生涯档案", "Custom rules · also contributes to Career")}</small></span>
             </button>
           </div>
           <div className="grid-shot-session-type-notice" data-session-type={draftSessionType}>
             {draftSessionType === "benchmark" ? <Target size={19} /> : <Settings2 size={19} />}
             <div>
-              <b>{draftSessionType === "benchmark" ? tx("本局将计入生涯基线", "This run counts toward your career baseline") : tx("按自己的节奏练习", "Practice with your own setup")}</b>
+              <b>{draftSessionType === "benchmark" ? tx("使用固定标准配置", "Use the fixed standard setup") : tx("按自己的节奏练习", "Practice with your own setup")}</b>
               <p>{draftSessionType === "benchmark"
                 ? tx(`${GRID_SHOT_BENCHMARK.duration} 秒、中型目标、3 个同时目标保持固定。`, `${GRID_SHOT_BENCHMARK.duration} seconds, medium targets, and 3 active targets are fixed.`)
-                : tx("时长和目标尺寸都可以调整；成绩会保留在训练记录中，但不会改变生涯基线。", "Duration and target size are adjustable. The result stays in history without changing your career baseline.")}</p>
+                : tx("时长和目标尺寸都可以调整；有效成绩同样会进入生涯档案，趋势只比较配置一致的记录。", "Duration and target size are adjustable. Valid results still contribute to Career, while trends compare matching setups only.")}</p>
             </div>
           </div>
         </section>

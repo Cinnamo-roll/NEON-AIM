@@ -20,6 +20,12 @@ export interface TrainingAnalysisSummary {
   accuracy: number;
   targetsPerMinute: number;
   averageHitInterval: number;
+  /** Robust center of consecutive-hit intervals; absent on legacy snapshots. */
+  medianHitInterval?: number;
+  fastestHitInterval?: number;
+  slowestHitInterval?: number;
+  /** Target visible-to-hit dwell time, not human reaction time. */
+  averageTargetLifetime?: number;
   consistencyScore: number;
   maxCombo: number;
   grade: string;
@@ -34,7 +40,10 @@ export interface TrainingAnalysisWindow {
   accuracy: number;
   targetsPerMinute: number;
   averageHitInterval: number;
+  medianHitInterval?: number;
+  averageTargetLifetime?: number;
   consistencyScore: number;
+  maxCombo?: number;
   score: number;
 }
 

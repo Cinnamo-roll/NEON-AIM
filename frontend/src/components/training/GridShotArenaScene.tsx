@@ -238,6 +238,7 @@ export const GridShotArenaScene = forwardRef<GridShotSceneApi, ArenaSceneProps>(
   const inputRuntime = useRef({ settings, visualMode, debugInput, pointerInputMode, inputLifecycle, sensitivity: createNeonInputSensitivity(settings) });
   const finishAmount = useRef(0);
   const previousState = useRef<TrainingState>(state);
+  const pausedAt = useRef(0);
   const mainLight = useRef<THREE.DirectionalLight>(null);
   const rimLightLeft = useRef<THREE.PointLight>(null);
   const rimLightRight = useRef<THREE.PointLight>(null);
@@ -359,6 +360,15 @@ export const GridShotArenaScene = forwardRef<GridShotSceneApi, ArenaSceneProps>(
 
   useEffect(() => {
     const prior = previousState.current;
+    const now = performance.now();
+    if (state === "paused" && prior !== "paused") pausedAt.current = now;
+    if (state === "playing" && prior === "paused" && pausedAt.current > 0) {
+      const pausedDuration = Math.max(0, now - pausedAt.current);
+      pool.current.forEach((target) => {
+        if (target.state === "active") target.bornAt += pausedDuration;
+      });
+      pausedAt.current = 0;
+    }
     if (state === "ready") inputController.setAngles(0, 0);
     if (state === "ready" || state === "countdown" || (state === "playing" && (prior === "ready" || prior === "countdown"))) {
       resetPool();

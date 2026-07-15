@@ -176,13 +176,14 @@ class TrainingSessionService implements TrainingSessionAnalysisOperations {
 			windows.add(new TrainingAnalysisSnapshot.Window(window.path("label").asString(),
 					window.path("startMs").asLong(), window.path("endMs").asLong(),
 					metrics(window, "hits", "misses", "accuracy", "targetsPerMinute",
-							"averageHitInterval", "consistencyScore", "score")));
+							"averageHitInterval", "medianHitInterval", "averageTargetLifetime",
+							"consistencyScore", "maxCombo", "score")));
 		}
 		List<TrainingAnalysisSnapshot.Signal> signals = new java.util.ArrayList<>();
 		for (JsonNode signal : raw.path("signals")) {
 			signals.add(new TrainingAnalysisSnapshot.Signal(signal.path("code").asString(),
 					TrainingAnalysisSnapshot.Severity.valueOf(signal.path("severity").asString().toUpperCase()),
-					numericFields(signal.path("evidence"))));
+					numericFieldsExcept(signal.path("evidence"), "targetAccuracy", "targetConsistency")));
 		}
 		TrainingAnalysisSnapshot.Comparison comparison = recentComparison(session);
 		if (comparison == null) {
@@ -201,7 +202,8 @@ class TrainingSessionService implements TrainingSessionAnalysisOperations {
 				TrainingAnalysisSnapshot.Scope.SESSION, session.id().toString(), session.analysisDataVersion(),
 				session.trainingId(), session.configurationKey(), session.hits() + session.misses(),
 				metrics(summary, "score", "hits", "misses", "accuracy", "targetsPerMinute",
-						"averageHitInterval", "consistencyScore", "maxCombo"),
+						"averageHitInterval", "medianHitInterval", "fastestHitInterval",
+						"slowestHitInterval", "averageTargetLifetime", "consistencyScore", "maxCombo"),
 				windows, signals, comparison, new TrainingAnalysisSnapshot.Integrity(
 						integrity.path("passed").asBoolean(), integrityErrors));
 	}

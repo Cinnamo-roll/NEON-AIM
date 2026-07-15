@@ -5,6 +5,7 @@ export type {
   CareerCapabilityCode,
   CareerCapabilityContribution,
   CareerMetricDefinition,
+  CareerProjectDifficulty,
   CareerProjectDefinition,
   LocalizedCareerText,
 } from "./careerProjectDefinition";

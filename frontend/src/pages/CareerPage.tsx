@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   ArrowLeft,
   ArrowRight,
+  Clock3,
   History,
   Layers3,
   LogIn,
@@ -18,6 +19,10 @@ import {
   type CareerPageDirection,
   type CareerPrimaryView,
 } from "../features/career/CareerPageCarousel";
+import {
+  careerPrimaryViewStorageKey,
+  readCareerPrimaryView,
+} from "../features/career/careerPrimaryViewStorage";
 import { CareerProjectDirectory } from "../features/career/CareerProjectDirectory";
 import type {
   CareerProjectDataset,
@@ -28,6 +33,8 @@ import {
   getCareerProjectModule,
   listCareerProjectModules,
 } from "../features/career/careerProjectRegistry";
+import { listPendingGuestTrainingSessions } from "../game/storage/pendingGuestTrainingSessions";
+import type { TrainingSessionSubmission } from "../game/storage/trainingSessionService";
 import { tx } from "../i18n";
 import "./careerPage.css";
 
@@ -43,19 +50,12 @@ interface SelectedSession {
   sessionKey: string;
 }
 
-const PRIMARY_VIEW_STORAGE_KEY = "neon-aim:career-primary-view";
 const CAREER_GUEST_DATA_ROWS = [
   ["SESSION STREAM", "TRAINING RECORD", "PROJECT PROFILE", "CAPABILITY EVIDENCE"],
   ["ACCURACY", "SPEED", "STABILITY", "CONTROL"],
   ["AI ANALYSIS", "TREND SIGNAL", "NEXT FOCUS", "CONFIDENCE"],
   ["GAME GOAL", "TRAINING PLAN", "REVIEW LOOP", "PROGRESS"],
 ] as const;
-
-function readPrimaryView(): CareerPrimaryView {
-  if (typeof window === "undefined") return "overview";
-  const stored = window.sessionStorage.getItem(PRIMARY_VIEW_STORAGE_KEY);
-  return stored === "projects" || stored === "game-plan" ? stored : "overview";
-}
 
 function ProjectUnavailable({ onBack }: { onBack: () => void }) {
   return (
@@ -69,7 +69,21 @@ function ProjectUnavailable({ onBack }: { onBack: () => void }) {
   );
 }
 
+function formatGuestSessionTime(completedAt: string) {
+  const date = new Date(completedAt);
+  if (Number.isNaN(date.getTime())) return tx("刚刚", "Just now");
+  const twoDigits = (value: number) => String(value).padStart(2, "0");
+  return `${twoDigits(date.getMonth() + 1)}-${twoDigits(date.getDate())} ${twoDigits(date.getHours())}:${twoDigits(date.getMinutes())}`;
+}
+
+function guestProjectName(session: TrainingSessionSubmission) {
+  const module = getCareerProjectModule(session.trainingId);
+  return module ? tx(...module.definition.name) : session.trainingId.toUpperCase();
+}
+
 export function CareerGuestIntro({ onLogin }: { onLogin: () => void }) {
+  const localSessions = [...listPendingGuestTrainingSessions()]
+    .sort((left, right) => right.completedAt.localeCompare(left.completedAt));
   return (
     <main className="workspace-main career-game-plan career-guest-intro">
       <section className="career-guest-landing">
@@ -80,21 +94,53 @@ export function CareerGuestIntro({ onLogin }: { onLogin: () => void }) {
             </span>
           ))}
         </div>
-        <div className="career-guest-center">
-          <span><i />CAREER INTELLIGENCE<i /></span>
-          <h1 aria-label={tx("不只记录成绩，更告诉你下一步练什么", "More than scores. Know what to train next.")}>
-            <span aria-hidden="true">{tx("不只记录成绩", "More than scores")}</span>
-            <span aria-hidden="true">{tx("更告诉你下一步练什么", "Know what to train next")}</span>
-          </h1>
-          <p>{tx(
-            "生涯会保存训练记录、建立长期能力档案。AI 会分析你的优势和短板；未来还会结合游戏目标，生成训练计划。",
-            "Career saves your sessions and builds a long-term capability profile. AI finds strengths and weak points, and will turn game goals into a training plan.",
-          )}</p>
-          <button className="career-guest-action" type="button" onClick={onLogin}>
-            <LogIn size={18} />
-            <strong>{tx("登录开启我的生涯", "Sign in to start my Career")}</strong>
-            <ArrowRight size={19} />
-          </button>
+        <div className="career-guest-layout">
+          <div className="career-guest-center">
+            <span><i />CAREER INTELLIGENCE<i /></span>
+            <h1 aria-label={tx("不只记录成绩，更告诉你下一步练什么", "More than scores. Know what to train next.")}>
+              <span aria-hidden="true">{tx("不只记录成绩", "More than scores")}</span>
+              <span aria-hidden="true">{tx("更告诉你下一步练什么", "Know what to train next")}</span>
+            </h1>
+            <p>{tx(
+              "生涯会保存训练记录、建立长期能力档案。AI 会分析你的优势和短板；未来还会结合游戏目标，生成训练计划。",
+              "Career saves your sessions and builds a long-term capability profile. AI finds strengths and weak points, and will turn game goals into a training plan.",
+            )}</p>
+            <button className="career-guest-action" type="button" onClick={onLogin}>
+              <LogIn size={18} />
+              <strong>{tx("登录开启我的生涯", "Sign in to start my Career")}</strong>
+              <ArrowRight size={19} />
+            </button>
+          </div>
+
+          <aside className="career-guest-local" aria-label={tx("访客训练记录", "Guest training records")}>
+            <header>
+              <span><History size={16} /><b>{tx("本次访问训练", "Training this visit")}</b></span>
+              <small>{tx(`待保存 ${localSessions.length} 局`, `${localSessions.length} awaiting save`)}</small>
+            </header>
+            <div className="career-guest-local-list">
+              {localSessions.length > 0 ? localSessions.map((session) => (
+                <article key={session.clientSessionId}>
+                  <header>
+                    <span><b>{guestProjectName(session)}</b><small>{session.sessionType === "benchmark" ? tx("基准训练", "Benchmark") : tx("自定义训练", "Custom")}</small></span>
+                    <time dateTime={session.completedAt}><Clock3 size={12} />{formatGuestSessionTime(session.completedAt)}</time>
+                  </header>
+                  <div>
+                    <strong>{Math.round(session.summary.score).toLocaleString()}</strong>
+                    <span><small>{tx("准确率", "Accuracy")}</small><b>{session.summary.accuracy.toFixed(1)}%</b></span>
+                    <span><small>{tx("时长", "Duration")}</small><b>{Math.round(session.durationMs / 1_000)}s</b></span>
+                    <em data-grade={session.summary.grade}>{session.summary.grade}</em>
+                  </div>
+                </article>
+              )) : (
+                <div className="career-guest-local-empty">
+                  <History size={20} />
+                  <b>{tx("还没有访客训练记录", "No guest training yet")}</b>
+                  <small>{tx("完成一局训练后，数据会显示在这里。", "Finish a session and its data will appear here.")}</small>
+                </div>
+              )}
+            </div>
+            <footer><LogIn size={13} />{tx("登录即可保存到生涯", "Sign in to save to Career")}</footer>
+          </aside>
         </div>
       </section>
 
@@ -115,6 +161,7 @@ export function CareerPage({
   onLogin,
 }: CareerPageProps) {
   const authStatus = useAuthStore((state) => state.status);
+  const userId = useAuthStore((state) => state.user?.id);
   const isAdmin = useAuthStore((state) => state.user?.role === "ADMIN");
   const modules = useMemo(() => listCareerProjectModules(), []);
   const loadContext = useCallback((projectId: string): CareerProjectLoadContext => ({
@@ -127,7 +174,8 @@ export function CareerPage({
   ));
   const [loadingProjects, setLoadingProjects] = useState<Record<string, boolean>>({});
   const [refreshKey, setRefreshKey] = useState(0);
-  const [primaryView, setPrimaryView] = useState<CareerPrimaryView>(readPrimaryView);
+  const [primaryView, setPrimaryView] = useState<CareerPrimaryView>(() => readCareerPrimaryView(userId));
+  const primaryViewUserId = useRef(userId);
   const [pageDirection, setPageDirection] = useState<CareerPageDirection>("next");
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
   const [selectedSession, setSelectedSession] = useState<SelectedSession | null>(null);
@@ -136,8 +184,20 @@ export function CareerPage({
   const [sessionError, setSessionError] = useState<string | null>(null);
 
   useEffect(() => {
-    window.sessionStorage.setItem(PRIMARY_VIEW_STORAGE_KEY, primaryView);
-  }, [primaryView]);
+    if (!userId) {
+      primaryViewUserId.current = undefined;
+      return;
+    }
+    if (primaryViewUserId.current !== userId) {
+      primaryViewUserId.current = userId;
+      setPrimaryView(readCareerPrimaryView(userId));
+      setPageDirection("next");
+      setActiveProjectId(null);
+      setSelectedSession(null);
+      return;
+    }
+    window.sessionStorage.setItem(careerPrimaryViewStorageKey(userId), primaryView);
+  }, [primaryView, userId]);
 
   useEffect(() => {
     let active = true;
@@ -243,14 +303,6 @@ export function CareerPage({
     window.scrollTo({ top: 0, left: 0, behavior: "auto" });
   };
 
-  const startOverviewGoal = () => {
-    if (overviewModel.goal.projectId && overviewModel.goal.entryId) {
-      onStartTraining(overviewModel.goal.projectId, overviewModel.goal.entryId);
-    } else {
-      onBrowseTraining();
-    }
-  };
-
   if (selectedSession) {
     if (!selectedModule || !selectedRecord) {
       return <ProjectUnavailable onBack={() => setSelectedSession(null)} />;
@@ -279,11 +331,8 @@ export function CareerPage({
           model={overviewModel}
           loading={loading}
           notice={notice}
-          onStartGoal={startOverviewGoal}
           onBrowseTraining={onBrowseTraining}
-          onOpenProject={openProject}
           onOpenSession={openSession}
-          onOpenGamePlan={() => selectPrimaryView("game-plan", "previous")}
         />
       </CareerPageCarousel>
     );
@@ -292,7 +341,7 @@ export function CareerPage({
   if (activeProjectId === null) {
     return (
       <CareerPageCarousel view="projects" direction={pageDirection} onNavigate={selectPrimaryView}>
-        <CareerProjectDirectory projects={overviewModel.projects} onOpenProject={openProject} onBrowseTraining={onBrowseTraining} />
+        <CareerProjectDirectory projects={overviewModel.projects} onOpenProject={openProject} />
       </CareerPageCarousel>
     );
   }

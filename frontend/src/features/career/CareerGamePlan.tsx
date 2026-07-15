@@ -1,5 +1,32 @@
-import { Layers3 } from "lucide-react";
+import { CalendarRange, Crosshair, Layers3, RefreshCw, UserRound } from "lucide-react";
 import { tx } from "../../i18n";
+
+const PLANNED_FEATURES = [
+  {
+    code: "01",
+    icon: UserRound,
+    title: ["游戏目标档案", "Game goal profile"],
+    description: ["记录你的游戏、位置与阶段目标。", "Save your game, role, and current goals."],
+  },
+  {
+    code: "02",
+    icon: Crosshair,
+    title: ["专属训练组合", "Personal training mix"],
+    description: ["从训练项目中组合更适合你的练习。", "Combine training projects around your needs."],
+  },
+  {
+    code: "03",
+    icon: CalendarRange,
+    title: ["阶段训练安排", "Phased schedule"],
+    description: ["生成清晰的周期、频率与训练重点。", "Set clear cycles, frequency, and priorities."],
+  },
+  {
+    code: "04",
+    icon: RefreshCw,
+    title: ["动态计划调整", "Adaptive updates"],
+    description: ["根据长期表现持续调整后续计划。", "Update the plan as long-term performance changes."],
+  },
+] as const;
 
 export function CareerGamePlan() {
   return (
@@ -7,30 +34,37 @@ export function CareerGamePlan() {
       <header className="career-game-plan-header">
         <div>
           <h1>{tx("游戏成长计划", "Game growth plan")}</h1>
-          <p>{tx(
-            "该板块将在全部训练项目及其能力档案完成后开放，届时会基于完整训练数据生成游戏专项成长路线。",
-            "This area will open after every training project and capability profile is complete, using the full training dataset to build game-specific growth paths.",
-          )}</p>
         </div>
       </header>
 
-      <section className="career-game-plan-empty">
-        <div>
-          <Layers3 size={24} />
-          <span>
-            <small>{tx("开发状态", "DEVELOPMENT STATUS")}</small>
+      <section className="career-game-plan-preview">
+        <header className="career-game-plan-status">
+          <span><Layers3 size={20} /></span>
+          <div>
+            <small>{tx("当前状态", "CURRENT STATUS")}</small>
             <h2>{tx("待开发", "Coming later")}</h2>
-            <p>{tx(
-              "当前阶段优先完成 31 个训练项目。游戏成长计划不会影响训练记录、项目档案、综合能力档案和单局分析的使用。",
-              "The current priority is completing all 31 training projects. Training records, project profiles, capability profiles, and session analysis remain fully available without a game plan.",
-            )}</p>
-          </span>
-        </div>
-        <div className="career-game-plan-outline">
-          <span><b>01</b>{tx("完成训练项目", "Complete training projects")}</span>
-          <span><b>02</b>{tx("建立项目能力档案", "Build project capability profiles")}</span>
-          <span><b>03</b>{tx("完善综合能力档案", "Complete the combined capability profile")}</span>
-          <span><b>04</b>{tx("开放游戏成长计划", "Open game growth plans")}</span>
+          </div>
+          <p>{tx(
+            "将在 31 个训练项目完成后开始建设。",
+            "Development starts after all 31 training projects are complete.",
+          )}</p>
+        </header>
+
+        <div className="career-game-plan-planned">
+          <header>
+            <small>{tx("预计开发内容", "PLANNED FEATURES")}</small>
+            <h3>{tx("从训练数据到游戏目标", "From training data to game goals")}</h3>
+          </header>
+          <div>
+            {PLANNED_FEATURES.map(({ code, icon: Icon, title, description }) => (
+              <article key={code}>
+                <span><Icon size={17} /></span>
+                <small>{code}</small>
+                <strong>{tx(title[0], title[1])}</strong>
+                <p>{tx(description[0], description[1])}</p>
+              </article>
+            ))}
+          </div>
         </div>
       </section>
     </main>

@@ -5,6 +5,7 @@ import {
   type GridShotEvent,
   type GridShotEventType,
 } from "./gridShotAnalytics";
+import { comboBonus as expectedComboBonus, isStable, speedBonus as expectedSpeedBonus } from "../../scoring/gridShotScoreRules";
 
 type EventSeed = {
   elapsedMs: number;
@@ -19,13 +20,16 @@ type EventSeed = {
 function eventLog(seeds: readonly EventSeed[], sessionId = "session-a"): GridShotEvent[] {
   let combo = 0;
   let previousHitAt: number | undefined;
+  const intervals: number[] = [];
   return seeds.map((seed, index) => {
     const comboBefore = combo;
     combo = seed.type === "hit" ? combo + 1 : 0;
+    const interval = seed.type === "hit" && previousHitAt !== undefined ? seed.elapsedMs - previousHitAt : undefined;
+    if (interval !== undefined) intervals.push(interval);
     const baseScore = seed.type === "hit" ? seed.baseScore ?? 100 : 0;
-    const speedBonus = seed.type === "hit" ? seed.speedBonus ?? 0 : 0;
-    const comboBonus = seed.type === "hit" ? seed.comboBonus ?? 0 : 0;
-    const stabilityBonus = seed.type === "hit" ? seed.stabilityBonus ?? 0 : 0;
+    const speedBonus = seed.type === "hit" ? seed.speedBonus ?? expectedSpeedBonus(interval ?? null).bonus : 0;
+    const comboBonus = seed.type === "hit" ? seed.comboBonus ?? expectedComboBonus(combo) : 0;
+    const stabilityBonus = seed.type === "hit" ? seed.stabilityBonus ?? (isStable(intervals) ? 5 : 0) : 0;
     const event: GridShotEvent = {
       id: `${sessionId}:${index}`,
       sessionId,
@@ -33,10 +37,10 @@ function eventLog(seeds: readonly EventSeed[], sessionId = "session-a"): GridSho
       elapsedMs: seed.elapsedMs,
       type: seed.type,
       targetId: seed.type === "hit" ? index % 10 : undefined,
-      targetActivatedAt: seed.type === "hit" ? Math.max(0, seed.elapsedMs - (seed.targetLifetimeMs ?? 250)) : undefined,
+      targetActivatedAt: seed.type === "hit" ? 1_000_000 + seed.elapsedMs - (seed.targetLifetimeMs ?? 250) : undefined,
       targetLifetimeMs: seed.type === "hit" ? seed.targetLifetimeMs ?? 250 : undefined,
       previousHitAt: seed.type === "hit" ? previousHitAt : undefined,
-      hitIntervalMs: seed.type === "hit" && previousHitAt !== undefined ? seed.elapsedMs - previousHitAt : undefined,
+      hitIntervalMs: interval,
       comboBefore,
       comboAfter: combo,
       baseScore,
@@ -64,12 +68,37 @@ describe("Grid Shot event-sourced analytics", () => {
 
     expect(analytics.phases.map((phase) => ({ hits: phase.hits, misses: phase.misses, score: phase.score }))).toEqual([
       { hits: 2, misses: 0, score: 200 },
-      { hits: 1, misses: 1, score: 100 },
+      { hits: 1, misses: 1, score: 150 },
       { hits: 2, misses: 0, score: 200 },
     ]);
     expect(analytics.phases.reduce((sum, phase) => sum + phase.score, 0)).toBe(analytics.score);
     expect(analytics.phases.reduce((sum, phase) => sum + phase.hits, 0)).toBe(analytics.hits);
     expect(analytics.phases.reduce((sum, phase) => sum + phase.misses, 0)).toBe(analytics.misses);
+    expect(analytics.integrity.passed).toBe(true);
+  });
+
+  it.each([
+    { durationMs: 30_000, boundaries: [10_000, 20_000, 30_000] },
+    { durationMs: 90_000, boundaries: [30_000, 60_000, 90_000] },
+  ])("divides a $durationMs ms custom run into real thirds", ({ durationMs, boundaries }) => {
+    const events = eventLog([
+      { elapsedMs: boundaries[0] - 1, type: "hit" },
+      { elapsedMs: boundaries[0], type: "hit" },
+      { elapsedMs: boundaries[1], type: "miss" },
+      { elapsedMs: boundaries[2], type: "hit" },
+    ]);
+    const analytics = analyzeGridShotEvents(events, { sessionDurationMs: durationMs });
+
+    expect(analytics.phases.map((phase) => [phase.startMs, phase.endMs])).toEqual([
+      [0, boundaries[0]],
+      [boundaries[0], boundaries[1]],
+      [boundaries[1], boundaries[2]],
+    ]);
+    expect(analytics.phases.map((phase) => [phase.hits, phase.misses])).toEqual([
+      [1, 0],
+      [1, 0],
+      [1, 1],
+    ]);
     expect(analytics.integrity.passed).toBe(true);
   });
 
@@ -142,6 +171,15 @@ describe("Grid Shot event-sourced analytics", () => {
     expect(analytics.averageTargetLifetime).toBe(300);
   });
 
+  it("rejects target dwell time that disagrees with activation and hit timestamps", () => {
+    const events = eventLog([{ elapsedMs: 500, type: "hit", targetLifetimeMs: 200 }]);
+    events[0].targetLifetimeMs = 999;
+    const analytics = analyzeGridShotEvents(events, { sessionDurationMs: 60_000 });
+
+    expect(analytics.integrity.checks.targetLifetimesValid).toBe(false);
+    expect(analytics.integrity.passed).toBe(false);
+  });
+
   it("uses robust bounded consistency and applies a miss penalty without fake intervals", () => {
     const intervals = [200, 201, 199, 202, 5_000];
     const withoutMisses = calculateGridShotConsistency(intervals, 6, 0);
@@ -164,6 +202,20 @@ describe("Grid Shot event-sourced analytics", () => {
     expect(analytics.integrity.errors).toContain("a miss event contains non-zero score");
   });
 
+  it("rejects a component-consistent score that violates Grid Shot scoring bands", () => {
+    const events = eventLog([
+      { elapsedMs: 1_000, type: "hit" },
+      { elapsedMs: 2_000, type: "hit" },
+    ]);
+    events[1].speedBonus = 50;
+    events[1].totalScore = 150;
+    const analytics = analyzeGridShotEvents(events, { sessionDurationMs: 60_000 });
+
+    expect(analytics.integrity.checks.scoreComponentsMatch).toBe(true);
+    expect(analytics.integrity.checks.scoreRulesMatch).toBe(false);
+    expect(analytics.integrity.passed).toBe(false);
+  });
+
   it("never emits NaN and reports invalid source data", () => {
     const events = eventLog([{ elapsedMs: 1_000, type: "hit" }]);
     events[0].elapsedMs = Number.NaN;
@@ -175,6 +227,16 @@ describe("Grid Shot event-sourced analytics", () => {
     expect(Number.isFinite(analytics.accuracy)).toBe(true);
     expect(Number.isFinite(analytics.consistencyScore)).toBe(true);
     expect(Number.isFinite(analytics.grade.compositeScore)).toBe(true);
+  });
+
+  it("does not silently reinterpret an unknown event type as a miss", () => {
+    const events = eventLog([{ elapsedMs: 1_000, type: "miss" }]);
+    (events[0] as unknown as { type: string }).type = "unknown";
+    const analytics = analyzeGridShotEvents(events, { sessionDurationMs: 60_000 });
+
+    expect(analytics.hits).toBe(0);
+    expect(analytics.misses).toBe(0);
+    expect(analytics.integrity.checks.shotsMatch).toBe(false);
   });
 
   it("detects duplicated IDs, mixed sessions and broken combo chains", () => {
@@ -189,5 +251,15 @@ describe("Grid Shot event-sourced analytics", () => {
     expect(analytics.integrity.checks.uniqueEventIds).toBe(false);
     expect(analytics.integrity.checks.singleSession).toBe(false);
     expect(analytics.integrity.checks.combosValid).toBe(false);
+  });
+
+  it("rejects a single but wrong session id when the expected session is known", () => {
+    const analytics = analyzeGridShotEvents(eventLog([
+      { elapsedMs: 100, type: "hit" },
+      { elapsedMs: 200, type: "hit" },
+    ], "other-session"), { sessionDurationMs: 60_000, sessionId: "expected-session" });
+
+    expect(analytics.integrity.checks.singleSession).toBe(false);
+    expect(analytics.integrity.passed).toBe(false);
   });
 });

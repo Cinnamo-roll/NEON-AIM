@@ -1,8 +1,9 @@
 import type { ReactNode } from "react";
 import type {
-  CareerOverviewGoal,
+  CareerOverviewInsight,
   CareerOverviewProject,
   CareerOverviewSession,
+  CareerOverviewTrendLabels,
   CareerOverviewTrendPoint,
   CareerTrendDirection,
 } from "./careerOverviewModel";
@@ -53,18 +54,12 @@ export interface CareerProjectContribution {
   updatedAt: string | null;
   totalSessions: number;
   totalDurationMs: number;
-  benchmarkSessions: number;
-  practiceSessions: number;
-  activity: Array<Pick<CareerProjectSession, "completedAt" | "durationMs" | "sessionType">>;
+  activity: Array<Pick<CareerProjectSession, "completedAt" | "durationMs">>;
   abilities: CareerCapabilityEvidence[];
   recentSessions: CareerOverviewSession[];
   trend: CareerOverviewTrendPoint[];
-  goal: CareerOverviewGoal;
-  recommendation: {
-    title: string;
-    description: string;
-    actionLabel: string;
-  };
+  trendLabels?: CareerOverviewTrendLabels;
+  insight: CareerOverviewInsight;
 }
 
 export interface CareerProjectProfileRenderProps {

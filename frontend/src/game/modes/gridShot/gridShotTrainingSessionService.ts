@@ -29,9 +29,19 @@ export function buildGridShotTrainingSessionSubmission(
   GridShotSubmissionDetail,
   TrainingSessionAnalysisSnapshot & Record<string, unknown>
 > {
-  const bundle = buildGridShotAnalysisBundle(record, { targetSize: settings.targetSize });
-  const completedAt = new Date(record.createdAt);
-  const durationMs = record.duration * 1_000;
+  const targetSize = record.configuration?.targetSize ?? settings.targetSize;
+  const activeTargetCount = record.configuration?.activeTargetCount ?? 3;
+  const submissionRecord: GridShotHistoryRecord = {
+    ...record,
+    sessionType,
+    configuration: {
+      targetSize,
+      activeTargetCount,
+    },
+  };
+  const bundle = buildGridShotAnalysisBundle(submissionRecord, { targetSize });
+  const completedAt = new Date(submissionRecord.createdAt);
+  const durationMs = submissionRecord.duration * 1_000;
   return {
     clientSessionId: record.sessionId,
     trainingId: bundle.aiSnapshot.training.id,
@@ -43,14 +53,14 @@ export function buildGridShotTrainingSessionSubmission(
     completedAt: completedAt.toISOString(),
     durationMs,
     configuration: {
-      duration: record.duration,
-      targetSize: settings.targetSize,
-      activeTargetCount: 3,
+      duration: submissionRecord.duration,
+      targetSize,
+      activeTargetCount,
     },
     summary: bundle.aiSnapshot.summary,
     detail: {
       segments: bundle.detailSegments,
-      events: record.events ?? [],
+      events: submissionRecord.events ?? [],
     },
     analysisSnapshot: bundle.aiSnapshot as TrainingSessionAnalysisSnapshot & Record<string, unknown>,
     integrity: bundle.aiSnapshot.integrity,
@@ -63,16 +73,8 @@ export async function saveGridShotTrainingSession(
   sessionType: GridShotSessionType,
   authenticated: boolean,
 ): Promise<TrainingSessionSaveResult> {
-  const submissionRecord: GridShotHistoryRecord = {
-    ...record,
-    sessionType,
-    configuration: {
-      targetSize: settings.targetSize,
-      activeTargetCount: 3,
-    },
-  };
   try {
-    const submission = buildGridShotTrainingSessionSubmission(submissionRecord, settings, sessionType);
+    const submission = buildGridShotTrainingSessionSubmission(record, settings, sessionType);
     return await saveTrainingSessionSubmission(submission, authenticated);
   } catch {
     return { status: "failed", sessionId: record.sessionId };

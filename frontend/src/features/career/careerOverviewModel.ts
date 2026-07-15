@@ -10,24 +10,23 @@ export interface CareerOverviewAbility {
   trend: CareerTrendDirection;
 }
 
-export interface CareerOverviewGoal {
+export interface CareerOverviewInsight {
   eyebrow: string;
   title: string;
   description: string;
-  completed: number;
-  total: number;
-  projectId?: string;
-  entryId?: string;
-  actionLabel: string;
 }
 
 export interface CareerOverviewProject {
   definition: CareerProjectDefinition;
   statusLabel: string;
   sessionCount: number;
-  benchmarkCount: number;
   summary: string;
   trend: CareerTrendDirection;
+  coreMetrics: Array<{
+    code: string;
+    label: string;
+    value: string;
+  }>;
 }
 
 export interface CareerOverviewSession {
@@ -51,24 +50,21 @@ export interface CareerOverviewTrendPoint {
   secondary: number;
 }
 
+export interface CareerOverviewTrendLabels {
+  primary: string;
+  secondary: string;
+}
+
 export interface CareerOverviewModel {
   updatedAt: string | null;
   totalSessions: number;
   totalDurationMs: number;
-  benchmarkSessions: number;
-  practiceSessions: number;
   weeklySessions: number;
   weeklyDurationMs: number;
-  weeklyBenchmarkSessions: number;
-  weeklyPracticeSessions: number;
-  goal: CareerOverviewGoal;
+  insight: CareerOverviewInsight;
   abilities: CareerOverviewAbility[];
   projects: CareerOverviewProject[];
   recentSessions: CareerOverviewSession[];
   trend: CareerOverviewTrendPoint[];
-  recommendation: {
-    title: string;
-    description: string;
-    actionLabel: string;
-  };
+  trendLabels: CareerOverviewTrendLabels;
 }

@@ -1,4 +1,5 @@
 import { evaluateGridShotGrade, type GridShotGradeResult } from "./gridShotGrade";
+import { comboBonus, isStable, speedBonus } from "../../scoring/gridShotScoreRules";
 
 export type GridShotEventType = "hit" | "miss";
 
@@ -25,6 +26,7 @@ export interface GridShotEvent {
 export interface GridShotAnalyticsOptions {
   sessionDurationMs: number;
   activeDurationMs?: number;
+  sessionId?: string;
 }
 
 export interface GridShotScoreTotals {
@@ -63,6 +65,7 @@ export interface GridShotTimelinePoint {
 export interface GridShotIntegrityChecks {
   shotsMatch: boolean;
   scoreComponentsMatch: boolean;
+  scoreRulesMatch: boolean;
   phaseScoreMatch: boolean;
   phaseHitsMatch: boolean;
   phaseMissesMatch: boolean;
@@ -73,6 +76,7 @@ export interface GridShotIntegrityChecks {
   chronological: boolean;
   combosValid: boolean;
   hitIntervalsValid: boolean;
+  targetLifetimesValid: boolean;
   finiteValues: boolean;
 }
 
@@ -105,8 +109,6 @@ export interface GridShotAnalytics extends GridShotScoreTotals {
   integrity: GridShotIntegrityResult;
 }
 
-const PHASE_ONE_END_MS = 20_000;
-const PHASE_TWO_END_MS = 40_000;
 const SCORE_EPSILON = 1e-9;
 const ROBUST_SIGMA_FACTOR = 1.4826;
 const ROBUST_CV_AT_ZERO_SCORE = 0.35;
@@ -159,18 +161,28 @@ function addScore(totals: GridShotScoreTotals, event: GridShotEvent) {
   totals.score += finiteOrZero(event.totalScore);
 }
 
+function phaseBoundaries(sessionDurationMs: number) {
+  return {
+    firstEndMs: Math.round(sessionDurationMs / 3),
+    secondEndMs: Math.round(sessionDurationMs * 2 / 3),
+  };
+}
+
 function phaseIndex(elapsedMs: number, sessionDurationMs: number) {
   if (!Number.isFinite(elapsedMs) || elapsedMs < 0 || elapsedMs > sessionDurationMs) return -1;
-  if (elapsedMs < PHASE_ONE_END_MS) return 0;
-  if (elapsedMs < PHASE_TWO_END_MS) return 1;
+  const { firstEndMs, secondEndMs } = phaseBoundaries(sessionDurationMs);
+  if (elapsedMs < firstEndMs) return 0;
+  if (elapsedMs < secondEndMs) return 1;
   return 2;
 }
 
 function createPhases(sessionDurationMs: number): [GridShotPhaseAnalytics, GridShotPhaseAnalytics, GridShotPhaseAnalytics] {
+  const { firstEndMs, secondEndMs } = phaseBoundaries(sessionDurationMs);
+  const seconds = (milliseconds: number) => Number((milliseconds / 1_000).toFixed(3));
   const definitions = [
-    { id: "phase1", label: "前 20 秒", startMs: 0, endMs: PHASE_ONE_END_MS, endInclusive: false },
-    { id: "phase2", label: "中间 20 秒", startMs: PHASE_ONE_END_MS, endMs: PHASE_TWO_END_MS, endInclusive: false },
-    { id: "phase3", label: "最后 20 秒", startMs: PHASE_TWO_END_MS, endMs: sessionDurationMs, endInclusive: true },
+    { id: "phase1", label: `前 ${seconds(firstEndMs)} 秒`, startMs: 0, endMs: firstEndMs, endInclusive: false },
+    { id: "phase2", label: `${seconds(firstEndMs)}-${seconds(secondEndMs)} 秒`, startMs: firstEndMs, endMs: secondEndMs, endInclusive: false },
+    { id: "phase3", label: `最后 ${seconds(sessionDurationMs - secondEndMs)} 秒`, startMs: secondEndMs, endMs: sessionDurationMs, endInclusive: true },
   ] as const;
   return definitions.map((phase) => ({
     ...phase,
@@ -213,7 +225,7 @@ function createTimeline(events: readonly GridShotEvent[], activeDurationMs: numb
       const event = events[cursor];
       addScore(totals, event);
       if (event.type === "hit") hits += 1;
-      else misses += 1;
+      else if (event.type === "miss") misses += 1;
       combo = event.comboAfter;
       cursor += 1;
     }
@@ -254,11 +266,43 @@ function validateEventSequence(events: readonly GridShotEvent[]) {
   let previousHitElapsed: number | undefined;
   let combosValid = true;
   let hitIntervalsValid = true;
+  let scoreRulesValid = true;
+  let targetLifetimesValid = true;
+  const intervals: number[] = [];
   for (const event of events) {
     const expectedAfter = event.type === "hit" ? combo + 1 : 0;
     if (event.comboBefore !== combo || event.comboAfter !== expectedAfter) combosValid = false;
     combo = event.comboAfter;
-    if (event.type !== "hit") continue;
+    if (event.type === "miss") {
+      if (![event.baseScore, event.speedBonus, event.comboBonus, event.stabilityBonus, event.totalScore]
+        .every((value) => value === 0)) scoreRulesValid = false;
+      continue;
+    }
+    if (event.type !== "hit") {
+      scoreRulesValid = false;
+      continue;
+    }
+    if (event.targetLifetimeMs !== undefined && (
+      !Number.isFinite(event.targetLifetimeMs)
+      || event.targetLifetimeMs < 0
+      || event.targetActivatedAt !== undefined && (
+        !Number.isFinite(event.targetActivatedAt)
+        || event.targetActivatedAt > event.timestamp
+        || !approximatelyEqual(event.targetLifetimeMs, event.timestamp - event.targetActivatedAt)
+      )
+    )) targetLifetimesValid = false;
+    if (event.targetActivatedAt !== undefined && event.targetLifetimeMs === undefined) targetLifetimesValid = false;
+    const interval = previousHitElapsed === undefined ? null : Math.max(0, event.elapsedMs - previousHitElapsed);
+    const scoringIntervals = interval === null ? intervals : [...intervals, interval];
+    const expectedSpeed = speedBonus(interval).bonus;
+    const expectedCombo = comboBonus(expectedAfter);
+    const expectedStability = isStable(scoringIntervals) ? 5 : 0;
+    if (
+      !approximatelyEqual(event.baseScore, 100)
+      || !approximatelyEqual(event.speedBonus, expectedSpeed)
+      || !approximatelyEqual(event.comboBonus, expectedCombo)
+      || !approximatelyEqual(event.stabilityBonus, expectedStability)
+    ) scoreRulesValid = false;
     if (previousHitElapsed === undefined) {
       if (event.previousHitAt !== undefined || event.hitIntervalMs !== undefined) hitIntervalsValid = false;
     } else {
@@ -269,10 +313,11 @@ function validateEventSequence(events: readonly GridShotEvent[]) {
         || !approximatelyEqual(event.previousHitAt, previousHitElapsed)
         || !approximatelyEqual(event.hitIntervalMs, expectedInterval)
       ) hitIntervalsValid = false;
+      intervals.push(expectedInterval);
     }
     previousHitElapsed = event.elapsedMs;
   }
-  return { combosValid, hitIntervalsValid };
+  return { combosValid, hitIntervalsValid, scoreRulesValid, targetLifetimesValid };
 }
 
 export function analyzeGridShotEvents(
@@ -295,7 +340,7 @@ export function analyzeGridShotEvents(
   for (const event of events) {
     addScore(totals, event);
     if (event.type === "hit") hits += 1;
-    else misses += 1;
+    else if (event.type === "miss") misses += 1;
     maxCombo = Math.max(maxCombo, nonNegative(event.comboAfter));
     const scoreComponents = finiteOrZero(event.baseScore) + finiteOrZero(event.speedBonus)
       + finiteOrZero(event.comboBonus) + finiteOrZero(event.stabilityBonus);
@@ -310,9 +355,13 @@ export function analyzeGridShotEvents(
     assignedEvents += 1;
     const phase = phases[index as 0 | 1 | 2];
     addScore(phase, event);
-    phase.shots += 1;
-    if (event.type === "hit") phase.hits += 1;
-    else phase.misses += 1;
+    if (event.type === "hit") {
+      phase.shots += 1;
+      phase.hits += 1;
+    } else if (event.type === "miss") {
+      phase.shots += 1;
+      phase.misses += 1;
+    }
   }
 
   const shots = hits + misses;
@@ -337,33 +386,38 @@ export function analyzeGridShotEvents(
   const sessionIds = new Set(events.map((event) => event.sessionId));
   const sequence = validateEventSequence(events);
   const checks: GridShotIntegrityChecks = {
-    shotsMatch: shots === hits + misses,
+    shotsMatch: shots === hits + misses && shots === events.length,
     scoreComponentsMatch: eventScoreComponentsValid && approximatelyEqual(totals.score, aggregateComponents),
+    scoreRulesMatch: sequence.scoreRulesValid,
     phaseScoreMatch: approximatelyEqual(phaseScore, totals.score),
     phaseHitsMatch: phaseHits === hits,
     phaseMissesMatch: phaseMisses === misses,
     allEventsAssigned: assignedEvents === events.length,
     missScoresZero,
     uniqueEventIds: ids.size === events.length,
-    singleSession: sessionIds.size <= 1,
+    singleSession: sessionIds.size <= 1
+      && (!options.sessionId || sessionIds.size === 0 || sessionIds.has(options.sessionId)),
     chronological,
     combosValid: sequence.combosValid,
     hitIntervalsValid: sequence.hitIntervalsValid,
+    targetLifetimesValid: sequence.targetLifetimesValid,
     finiteValues: events.every(numericFieldsAreFinite),
   };
   const errorLabels: Record<keyof GridShotIntegrityChecks, string> = {
-    shotsMatch: "shots does not equal hits + misses",
+    shotsMatch: "event count does not equal recognized hits + misses",
     scoreComponentsMatch: "total score does not equal the four score components",
+    scoreRulesMatch: "one or more event score components violate Grid Shot scoring rules",
     phaseScoreMatch: "phase scores do not sum to total score",
     phaseHitsMatch: "phase hits do not sum to total hits",
     phaseMissesMatch: "phase misses do not sum to total misses",
     allEventsAssigned: "one or more events fall outside the session phase boundaries",
     missScoresZero: "a miss event contains non-zero score",
     uniqueEventIds: "event IDs are not unique",
-    singleSession: "events from multiple sessions were mixed",
+    singleSession: "events do not belong to one expected session",
     chronological: "event log is not chronological",
     combosValid: "comboBefore/comboAfter does not form a valid event sequence",
     hitIntervalsValid: "stored previous-hit fields disagree with successful-hit elapsed times",
+    targetLifetimesValid: "target lifetime does not match its activation and hit timestamps",
     finiteValues: "one or more event values are NaN or Infinity",
   };
   const errors = (Object.keys(checks) as Array<keyof GridShotIntegrityChecks>)

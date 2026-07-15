@@ -1,5 +1,5 @@
 import { Canvas } from "@react-three/fiber";
-import { Flag, Home, Play, RotateCcw, Settings as SettingsIcon, SlidersHorizontal, Target } from "lucide-react";
+import { Home, Play, RotateCcw, Settings as SettingsIcon, SlidersHorizontal, Target } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   GridShotArenaScene,
@@ -23,11 +23,6 @@ import {
 } from "../game/modes/gridShot/gridShotConfig";
 import { tx } from "../i18n";
 import { useAuthStore } from "../features/auth/authStore";
-import {
-  formatCoachingTarget,
-  getTrainingCoachingTask,
-  type TrainingCoachingTask,
-} from "../game/analysis/trainingCoachingTaskService";
 import type {
   PointerInputDebugSnapshot,
   PointerInputMode,
@@ -116,7 +111,6 @@ export function GridShotTrainingPage({ settings, gridShotSettings, sessionType, 
   const activeTargetSize = getGridShotTargetSize(gridShotSettings.targetSize);
   const benchmarkMode = !visualMode && sessionType === "benchmark";
   const authStatus = useAuthStore((state) => state.status);
-  const isAdmin = useAuthStore((state) => state.user?.role === "ADMIN");
 
   const machineRef = useRef<TrainingSessionMachine>(createTrainingSessionMachine(crypto.randomUUID()));
   const statsRef = useRef(createEmptyGridShotStats(machineRef.current.sessionId, duration));
@@ -135,7 +129,6 @@ export function GridShotTrainingPage({ settings, gridShotSettings, sessionType, 
   const [pointerInputMode, setPointerInputMode] = useState<PointerInputMode>("unlocked");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [trainingSettingsOpen, setTrainingSettingsOpen] = useState(false);
-  const [coachingTask, setCoachingTask] = useState<TrainingCoachingTask | null>(null);
 
   const fullscreenRootRef = useRef<HTMLDivElement>(null);
   const hudRef = useRef<HTMLDivElement>(null);
@@ -154,20 +147,6 @@ export function GridShotTrainingPage({ settings, gridShotSettings, sessionType, 
     combo: () => gridShotSettings.comboVolume,
     muted: () => settings.muted,
   }), [gridShotSettings.comboVolume, gridShotSettings.hitVolume, gridShotSettings.missVolume, settings.muted, settings.volume]);
-
-  useEffect(() => {
-    if (!benchmarkMode || !isAdmin || authStatus !== "authenticated") {
-      setCoachingTask(null);
-      return;
-    }
-    let active = true;
-    void getTrainingCoachingTask("grid-shot").then((task) => {
-      if (active) setCoachingTask(task?.status === "ACTIVE" ? task : null);
-    }).catch(() => {
-      if (active) setCoachingTask(null);
-    });
-    return () => { active = false; };
-  }, [authStatus, benchmarkMode, isAdmin]);
 
   const schedule = useCallback((callback: () => void, delay: number) => {
     const timer = window.setTimeout(callback, delay);
@@ -475,6 +454,10 @@ export function GridShotTrainingPage({ settings, gridShotSettings, sessionType, 
       sessionResultRef.current = {
         ...createGridShotRecord(statsRef.current, duration),
         sessionType,
+        configuration: {
+          targetSize: gridShotSettings.targetSize,
+          activeTargetCount: 3,
+        },
       };
     }
     const navigationClaim = claimResultNavigation(machineRef.current);
@@ -483,7 +466,7 @@ export function GridShotTrainingPage({ settings, gridShotSettings, sessionType, 
       if (document.fullscreenElement) void document.exitFullscreen?.().catch(() => undefined);
       onResult(sessionResultRef.current);
     }
-  }, [commit, duration, onResult, sessionType, trainingState, visualMode]);
+  }, [commit, duration, gridShotSettings.targetSize, onResult, sessionType, trainingState, visualMode]);
 
   useEffect(() => {
     if (import.meta.env.DEV) {
@@ -610,24 +593,13 @@ export function GridShotTrainingPage({ settings, gridShotSettings, sessionType, 
           <div className="grid-shot-benchmark-badge" data-session-type={benchmarkMode ? "benchmark" : "practice"}>
             {benchmarkMode ? <Target size={14} /> : <SlidersHorizontal size={14} />}
             <b>{benchmarkMode ? tx("基准训练", "Benchmark") : tx("自由练习", "Free practice")}</b>
-            <span>{authStatus !== "authenticated"
-              ? benchmarkMode
+            {authStatus !== "authenticated" && (
+              <span>{benchmarkMode
                 ? tx("完成后登录可保存本局并计入生涯", "Sign in after the run to save it to Career")
-                : tx("访客成绩仅保留到当前结算页", "Guest results remain only on the current result page")
-              : benchmarkMode
-                ? tx("本局将计入生涯基线", "This run counts toward your career baseline")
-                : tx("本局会保存，但不影响生涯基线", "Saved without affecting your career baseline")}</span>
+                : tx("访客成绩仅保留到当前结算页", "Guest results remain only on the current result page")}</span>
+            )}
           </div>
           <h1>GRID <b>SHOT</b></h1>
-          {coachingTask?.status === "ACTIVE" && (
-            <div className="grid-shot-coaching-goal">
-              <div><Flag size={14} /><span>{tx(`本轮目标 · 第 ${coachingTask.progress.attemptsCompleted + 1}/${coachingTask.progress.maxAttempts} 局`, `Current goal · run ${coachingTask.progress.attemptsCompleted + 1}/${coachingTask.progress.maxAttempts}`)}</span><b>{coachingTask.title}</b></div>
-              <div>{coachingTask.targets.map((target) => {
-                const progress = coachingTask.progress.targets.find((item) => item.metric === target.metric);
-                return <span key={target.metric}><small>{target.label} · {progress?.passCount ?? 0}/{progress?.requiredPasses ?? coachingTask.progress.requiredPasses}</small><b>{formatCoachingTarget(target)}</b></span>;
-              })}</div>
-            </div>
-          )}
           <div className="ready-metrics">
             <span>{tx("训练时长", "Duration")}<b>{duration} {tx("秒", "sec")}</b></span>
             <span>{tx("同时目标", "Active targets")}<b>3</b></span>

@@ -30,11 +30,8 @@ class TrainingCareerProfileService implements TrainingCareerProfileStrategy {
 
 	static final int PROFILE_SCHEMA_VERSION = 1;
 	static final String TRAINING_ID = "grid-shot";
-	static final String PROFILE_VERSION = "grid-shot-career-profile-v1";
-	static final String GRID_SHOT_BENCHMARK_CONFIGURATION = "grid-shot:60s:medium";
-	static final int GRID_SHOT_BENCHMARK_MODE_VERSION = 1;
-	static final int GRID_SHOT_BENCHMARK_SCORING_VERSION = 1;
-	private static final int MIN_BENCHMARK_SAMPLE = 3;
+	static final String PROFILE_VERSION = "grid-shot-career-profile-v2";
+	private static final int MIN_COMPARABLE_SAMPLE = 3;
 	private static final int MAX_PROFILE_SESSIONS = 500;
 	private static final int TREND_WINDOW_SIZE = 3;
 
@@ -69,17 +66,17 @@ class TrainingCareerProfileService implements TrainingCareerProfileStrategy {
 	@Transactional(readOnly = true)
 	public CareerContext loadCareerAnalysisContext(UUID userId) {
 		Projection projection = projection(userId);
-		List<Measurement> benchmark = projection.benchmark();
-		if (benchmark.size() < MIN_BENCHMARK_SAMPLE) {
-			throw new ApiException(HttpStatus.CONFLICT, "CAREER_BENCHMARK_SAMPLE_TOO_SMALL",
-					"至少完成 3 局基准训练后再生成综合分析");
+		List<Measurement> comparable = projection.comparable();
+		if (comparable.size() < MIN_COMPARABLE_SAMPLE) {
+			throw new ApiException(HttpStatus.CONFLICT, "CAREER_COMPARABLE_SAMPLE_TOO_SMALL",
+					"至少需要 3 局相同配置的有效训练记录后再生成综合分析");
 		}
 		ProfileView profile = projection.profile();
-		TrainingAnalysisSnapshot snapshot = analysisSnapshot(userId, profile, benchmark);
-		Confidence confidence = benchmark.size() >= 10 ? Confidence.STABLE
-				: benchmark.size() >= 5 ? Confidence.LOW : Confidence.INITIAL;
-		return new CareerContext(benchmark.getFirst().session().id(), snapshot, confidence,
-				benchmark.size(), benchmark.size(), 1);
+		TrainingAnalysisSnapshot snapshot = analysisSnapshot(userId, profile, comparable);
+		Confidence confidence = comparable.size() >= 10 ? Confidence.STABLE
+				: comparable.size() >= 5 ? Confidence.LOW : Confidence.INITIAL;
+		return new CareerContext(comparable.getFirst().session().id(), snapshot, confidence,
+				comparable.size(), comparable.size(), 1);
 	}
 
 	CareerContext loadCareerAnalysisContext(UUID userId, String trainingId) {
@@ -101,28 +98,32 @@ class TrainingCareerProfileService implements TrainingCareerProfileStrategy {
 		List<TrainingSession> valid = sessions.stream()
 				.filter(session -> session.integrityStatus() == TrainingSession.IntegrityStatus.VALID)
 				.toList();
-		List<Measurement> benchmark = valid.stream()
-				.filter(TrainingCareerProfileService::isGridShotBenchmark)
-				.map(this::measurement)
-				.toList();
+		Map<CohortKey, List<TrainingSession>> cohorts = new LinkedHashMap<>();
+		for (TrainingSession session : valid) {
+			CohortKey key = new CohortKey(session.configurationKey(), session.modeVersion(), session.scoringVersion());
+			cohorts.computeIfAbsent(key, ignored -> new ArrayList<>()).add(session);
+		}
+		List<TrainingSession> selected = List.of();
+		for (List<TrainingSession> cohort : cohorts.values()) {
+			if (cohort.size() > selected.size()) selected = cohort;
+		}
+		List<Measurement> comparable = selected.stream().map(this::measurement).toList();
 
-		ProfileConfidence confidence = confidence(benchmark.size());
-		int nextMilestone = benchmark.size() >= 10 ? 10 : benchmark.size() >= 5 ? 10 : benchmark.size() >= 3 ? 5 : 3;
-		int remaining = Math.max(0, nextMilestone - benchmark.size());
-		String dataVersion = dataVersion(benchmark);
-		List<DimensionProfile> dimensions = dimensions(benchmark);
+		ProfileConfidence confidence = confidence(comparable.size());
+		String dataVersion = dataVersion(comparable);
+		List<DimensionProfile> dimensions = dimensions(comparable);
 		List<String> capabilityCodes = dimensions.stream().map(DimensionProfile::code).toList();
-		Instant updatedAt = benchmark.isEmpty() ? null : benchmark.getFirst().session().completedAt();
+		Instant updatedAt = valid.isEmpty() ? null : valid.getFirst().completedAt();
+		CohortDefinition cohort = comparable.isEmpty() ? null : new CohortDefinition(
+				comparable.getFirst().session().configurationKey(), comparable.getFirst().session().modeVersion(),
+				comparable.getFirst().session().scoringVersion());
 		ProfileView view = new ProfileView(PROFILE_SCHEMA_VERSION, PROFILE_VERSION, dataVersion,
-				TRAINING_ID, new BenchmarkDefinition(GRID_SHOT_BENCHMARK_CONFIGURATION,
-						GRID_SHOT_BENCHMARK_MODE_VERSION, GRID_SHOT_BENCHMARK_SCORING_VERSION,
-						60, "medium", 3),
-				new SampleSummary(sessions.size(), valid.size(), benchmark.size(),
-						Math.max(0, valid.size() - benchmark.size()), confidence, nextMilestone, remaining),
-				new Coverage(benchmark.isEmpty() ? 0 : dimensions.size(), dimensions.size(), capabilityCodes),
-				dimensions, benchmark.stream().limit(3).map(value -> value.session().id()).toList(),
+				TRAINING_ID, cohort,
+				new SampleSummary(sessions.size(), valid.size(), comparable.size(), cohorts.size(), confidence),
+				new Coverage(comparable.isEmpty() ? 0 : dimensions.size(), dimensions.size(), capabilityCodes),
+				dimensions, comparable.stream().limit(3).map(value -> value.session().id()).toList(),
 				updatedAt, clock.instant());
-		return new Projection(view, benchmark);
+		return new Projection(view, comparable);
 	}
 
 	private List<DimensionProfile> dimensions(List<Measurement> sessions) {
@@ -190,36 +191,42 @@ class TrainingCareerProfileService implements TrainingCareerProfileStrategy {
 	}
 
 	private TrainingAnalysisSnapshot analysisSnapshot(UUID userId, ProfileView profile,
-			List<Measurement> benchmark) {
-		Map<String, Double> summary = analysisSummary(profile, benchmark);
-		List<Measurement> recentChronological = new ArrayList<>(benchmark.subList(0, Math.min(6, benchmark.size())));
+			List<Measurement> comparable) {
+		Map<String, Double> summary = analysisSummary(profile, comparable);
+		List<Measurement> recentChronological = new ArrayList<>(comparable.subList(0, Math.min(6, comparable.size())));
 		Collections.reverse(recentChronological);
 		List<TrainingAnalysisSnapshot.Window> windows = new ArrayList<>();
 		for (int index = 0; index < recentChronological.size(); index++) {
 			Measurement value = recentChronological.get(index);
 			TrainingSession session = value.session();
-			windows.add(new TrainingAnalysisSnapshot.Window(String.format("S%02d|60s|medium", index + 1),
+			int durationSeconds = Math.max(1, (int) Math.round(session.durationMs() / 1_000d));
+			String targetSize = targetSize(session.configurationKey());
+			windows.add(new TrainingAnalysisSnapshot.Window(String.format("S%02d|%ds|%s", index + 1,
+					durationSeconds, targetSize),
 					index * 1_000L, (index + 1) * 1_000L,
 					Map.of("scorePerMinute", scorePerMinute(session), "accuracy", session.accuracy(),
 							"targetsPerMinute", session.targetsPerMinute(),
 							"averageHitInterval", session.averageHitInterval(),
 							"consistencyScore", session.consistencyScore(),
-							"maxCombo", (double) session.maxCombo(), "durationSeconds", 60d,
-							"targetSizeLevel", 2d, "lastPhaseAccuracy", value.lastPhaseAccuracy(),
+							"maxCombo", (double) session.maxCombo(), "durationSeconds", (double) durationSeconds,
+							"targetSizeLevel", targetSizeLevel(targetSize), "lastPhaseAccuracy", value.lastPhaseAccuracy(),
 							"phaseAccuracyChange", value.phaseAccuracyChange())));
 		}
-		TrainingAnalysisSnapshot.Comparison comparison = benchmark.size() >= 6
-				? comparison(benchmark) : null;
+		TrainingAnalysisSnapshot.Comparison comparison = comparable.size() >= 6
+				? comparison(comparable) : null;
+		TrainingSession source = comparable.getFirst().session();
 		return new TrainingAnalysisSnapshot(TrainingAnalysisSnapshot.CURRENT_SCHEMA_VERSION,
-				TrainingAnalysisSnapshot.Scope.CAREER, "career:" + userId + ":grid-shot:benchmark",
-				profile.dataVersion(), "grid-shot", GRID_SHOT_BENCHMARK_CONFIGURATION,
-				benchmark.size(), summary, windows, signals(summary, benchmark.size()), comparison,
+				TrainingAnalysisSnapshot.Scope.CAREER,
+				"career:" + userId + ":grid-shot:cohort:" + source.configurationKey()
+						+ ":" + source.modeVersion() + ":" + source.scoringVersion(),
+				profile.dataVersion(), "grid-shot", source.configurationKey(),
+				comparable.size(), summary, windows, signals(summary, comparable.size()), comparison,
 				new TrainingAnalysisSnapshot.Integrity(true, List.of()));
 	}
 
 	private static Map<String, Double> analysisSummary(ProfileView profile, List<Measurement> sessions) {
 		Map<String, Double> result = new LinkedHashMap<>();
-		result.put("benchmarkSampleSize", (double) sessions.size());
+		result.put("comparableSampleSize", (double) sessions.size());
 		result.put("averageScorePerMinute", average(sessions, value -> scorePerMinute(value.session())));
 		result.put("bestScorePerMinute", sessions.stream().mapToDouble(value -> scorePerMinute(value.session())).max().orElse(0));
 		result.put("averageAccuracy", profile.metric("accuracy").lifetimeAverage());
@@ -236,8 +243,12 @@ class TrainingCareerProfileService implements TrainingCareerProfileStrategy {
 
 	private static List<TrainingAnalysisSnapshot.Signal> signals(Map<String, Double> summary, int sampleSize) {
 		List<TrainingAnalysisSnapshot.Signal> result = new ArrayList<>();
-		result.add(new TrainingAnalysisSnapshot.Signal("BENCHMARK_BASELINE",
-				TrainingAnalysisSnapshot.Severity.POSITIVE, Map.of("benchmarkSampleSize", (double) sampleSize)));
+		if (summary.get("averageAccuracy") >= 90 && summary.get("averageConsistencyScore") >= 75) {
+			result.add(new TrainingAnalysisSnapshot.Signal("CONTROL_FOUNDATION",
+					TrainingAnalysisSnapshot.Severity.POSITIVE,
+					Map.of("accuracy", summary.get("averageAccuracy"),
+							"consistencyScore", summary.get("averageConsistencyScore"))));
+		}
 		if (sampleSize < 5) {
 			result.add(new TrainingAnalysisSnapshot.Signal("LOW_SAMPLE",
 					TrainingAnalysisSnapshot.Severity.WARNING, Map.of("sampleSize", (double) sampleSize)));
@@ -281,11 +292,18 @@ class TrainingCareerProfileService implements TrainingCareerProfileStrategy {
 						- average(previous, Measurement::phaseAccuracyChange)));
 	}
 
-	private static boolean isGridShotBenchmark(TrainingSession session) {
-		return "benchmark".equals(session.sessionType())
-				&& GRID_SHOT_BENCHMARK_CONFIGURATION.equals(session.configurationKey())
-				&& session.modeVersion() == GRID_SHOT_BENCHMARK_MODE_VERSION
-				&& session.scoringVersion() == GRID_SHOT_BENCHMARK_SCORING_VERSION;
+	private static String targetSize(String configurationKey) {
+		String[] parts = configurationKey.split(":");
+		return parts.length == 0 ? "unknown" : parts[parts.length - 1];
+	}
+
+	private static double targetSizeLevel(String targetSize) {
+		return switch (targetSize) {
+			case "small" -> 1d;
+			case "medium" -> 2d;
+			case "large" -> 3d;
+			default -> 0d;
+		};
 	}
 
 	private static ProfileConfidence confidence(int sampleSize) {
@@ -305,7 +323,7 @@ class TrainingCareerProfileService implements TrainingCareerProfileStrategy {
 	}
 
 	private static String dataVersion(List<Measurement> sessions) {
-		String source = sessions.isEmpty() ? "grid-shot:benchmark:empty" : sessions.stream()
+		String source = sessions.isEmpty() ? "grid-shot:cohort:empty" : sessions.stream()
 				.map(value -> value.session().id() + ":" + value.session().analysisDataVersion())
 				.collect(java.util.stream.Collectors.joining("|"));
 		try {
@@ -321,17 +339,16 @@ class TrainingCareerProfileService implements TrainingCareerProfileStrategy {
 	enum Direction { HIGHER_IS_BETTER, LOWER_IS_BETTER }
 	enum TrendStatus { INSUFFICIENT, IMPROVING, STABLE, DECLINING }
 
-	record BenchmarkDefinition(String configurationKey, int modeVersion, int scoringVersion,
-			int durationSeconds, String targetSize, int activeTargets) { }
-	record SampleSummary(int totalSessions, int validSessions, int benchmarkSessions,
-			int freePracticeSessions, ProfileConfidence confidence, int nextMilestone, int remaining) { }
+	record CohortDefinition(String configurationKey, int modeVersion, int scoringVersion) { }
+	record SampleSummary(int totalSessions, int validSessions, int comparableSessions,
+			int configurationCount, ProfileConfidence confidence) { }
 	record Coverage(int availableDimensions, int totalDimensions, List<String> capabilityCodes) { }
 	record MetricProfile(String code, String unit, Direction direction, Double current,
 			Double lifetimeAverage, Double best, Double delta, TrendStatus trend) { }
 	record DimensionProfile(String code, String primaryMetric, TrendStatus trend,
 			List<MetricProfile> metrics) { }
 	record ProfileView(int schemaVersion, String profileVersion, String dataVersion, String trainingId,
-			BenchmarkDefinition benchmark, SampleSummary sample, Coverage coverage,
+			CohortDefinition cohort, SampleSummary sample, Coverage coverage,
 			List<DimensionProfile> dimensions, List<UUID> recentSessionIds,
 			Instant updatedAt, Instant generatedAt) {
 
@@ -344,5 +361,6 @@ class TrainingCareerProfileService implements TrainingCareerProfileStrategy {
 
 	private record Measurement(TrainingSession session, double lastPhaseAccuracy,
 			double phaseAccuracyChange) { }
-	private record Projection(ProfileView profile, List<Measurement> benchmark) { }
+	private record CohortKey(String configurationKey, int modeVersion, int scoringVersion) { }
+	private record Projection(ProfileView profile, List<Measurement> comparable) { }
 }

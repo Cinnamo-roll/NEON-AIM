@@ -26,7 +26,7 @@ class TrainingCareerAnalysisSnapshotTests {
 	private static final Clock CLOCK = Clock.fixed(Instant.parse("2026-07-14T10:00:00Z"), ZoneOffset.UTC);
 
 	@Test
-	void profileSeparatesBenchmarkRunsFromFreePractice() {
+	void profileUsesValidSessionsWithoutRequiringBenchmarkAndKeepsConfigurationsSeparate() {
 		UUID userId = UUID.randomUUID();
 		TrainingSessionRepository repository = mock(TrainingSessionRepository.class);
 		List<TrainingSession> sessions = List.of(
@@ -42,36 +42,36 @@ class TrainingCareerAnalysisSnapshotTests {
 
 		TrainingCareerProfileService.ProfileView profile = service.profile(userId, "grid-shot");
 
-		assertThat(profile.profileVersion()).isEqualTo("grid-shot-career-profile-v1");
+		assertThat(profile.profileVersion()).isEqualTo("grid-shot-career-profile-v2");
 		assertThat(profile.sample().totalSessions()).isEqualTo(4);
 		assertThat(profile.sample().validSessions()).isEqualTo(4);
-		assertThat(profile.sample().benchmarkSessions()).isEqualTo(1);
-		assertThat(profile.sample().freePracticeSessions()).isEqualTo(3);
+		assertThat(profile.sample().comparableSessions()).isEqualTo(1);
+		assertThat(profile.sample().configurationCount()).isEqualTo(4);
 		assertThat(profile.sample().confidence())
 				.isEqualTo(TrainingCareerProfileService.ProfileConfidence.OBSERVING);
-		assertThat(profile.sample().remaining()).isEqualTo(2);
+		assertThat(profile.cohort().configurationKey()).isEqualTo("grid-shot:30s:small");
 		assertThat(profile.dimensions()).extracting(TrainingCareerProfileService.DimensionProfile::code)
 				.containsExactly("CLICK_PRECISION", "TARGET_SWITCHING", "RHYTHM_STABILITY", "SUSTAINED_CONTROL");
-		assertThat(profile.metric("accuracy").current()).isEqualTo(82.4);
+		assertThat(profile.metric("accuracy").current()).isEqualTo(78.5);
 		assertThat(profile.metric("accuracy").trend())
 				.isEqualTo(TrainingCareerProfileService.TrendStatus.INSUFFICIENT);
 		assertThatThrownBy(() -> service.loadCareerAnalysisContext(userId, "grid-shot"))
 				.isInstanceOf(ApiException.class)
 				.extracting(exception -> ((ApiException) exception).code())
-				.isEqualTo("CAREER_BENCHMARK_SAMPLE_TOO_SMALL");
+				.isEqualTo("CAREER_COMPARABLE_SAMPLE_TOO_SMALL");
 	}
 
 	@Test
-	void benchmarkProfileIsTheSingleSourceForCareerAi() {
+	void mostPopulatedComparableConfigurationDrivesCareerAiRegardlessOfSessionType() {
 		UUID userId = UUID.randomUUID();
 		TrainingSessionRepository repository = mock(TrainingSessionRepository.class);
 		List<TrainingSession> sessions = List.of(
-				session("grid-shot:60s:medium", 60_000, 22_400, 86, 184, 326, 78),
-				session("grid-shot:60s:medium", 60_000, 22_000, 85, 181, 332, 75),
-				session("grid-shot:60s:medium", 60_000, 21_600, 84, 178, 337, 71),
-				session("grid-shot:60s:medium", 60_000, 21_000, 83, 174, 344, 66),
-				session("grid-shot:60s:medium", 60_000, 20_700, 82, 171, 351, 62),
-				session("grid-shot:60s:medium", 60_000, 20_300, 81, 168, 357, 59),
+				practiceSession("grid-shot:60s:medium", 60_000, 22_400, 86, 184, 326, 78),
+				practiceSession("grid-shot:60s:medium", 60_000, 22_000, 85, 181, 332, 75),
+				practiceSession("grid-shot:60s:medium", 60_000, 21_600, 84, 178, 337, 71),
+				practiceSession("grid-shot:60s:medium", 60_000, 21_000, 83, 174, 344, 66),
+				practiceSession("grid-shot:60s:medium", 60_000, 20_700, 82, 171, 351, 62),
+				practiceSession("grid-shot:60s:medium", 60_000, 20_300, 81, 168, 357, 59),
 				practiceSession("grid-shot:60s:medium", 60_000, 12_500, 91, 195, 302, 90));
 		when(repository.findByUserIdAndTrainingIdOrderByCompletedAtDesc(
 				eq(userId), eq("grid-shot"), any(Pageable.class)))
@@ -84,33 +84,35 @@ class TrainingCareerAnalysisSnapshotTests {
 				service.loadCareerAnalysisContext(userId, "grid-shot");
 		TrainingAnalysisSnapshot snapshot = context.snapshot();
 
-		assertThat(profile.sample().benchmarkSessions()).isEqualTo(6);
-		assertThat(profile.sample().freePracticeSessions()).isEqualTo(1);
+		assertThat(profile.sample().validSessions()).isEqualTo(7);
+		assertThat(profile.sample().comparableSessions()).isEqualTo(7);
+		assertThat(profile.sample().configurationCount()).isEqualTo(1);
 		assertThat(profile.sample().confidence())
 				.isEqualTo(TrainingCareerProfileService.ProfileConfidence.DEVELOPING);
 		assertThat(profile.coverage().availableDimensions()).isEqualTo(4);
 		assertThat(profile.metric("accuracy").current()).isEqualTo(85d);
-		assertThat(profile.metric("accuracy").lifetimeAverage()).isEqualTo(83.5d);
+		assertThat(profile.metric("accuracy").lifetimeAverage()).isCloseTo(84.5714d,
+				org.assertj.core.data.Offset.offset(0.0001d));
 		assertThat(profile.metric("accuracy").delta()).isEqualTo(3d);
 		assertThat(profile.metric("accuracy").trend())
 				.isEqualTo(TrainingCareerProfileService.TrendStatus.IMPROVING);
 
 		assertThat(context.confidence()).isEqualTo(TrainingCareerAnalysisOperations.Confidence.LOW);
-		assertThat(context.sampleSize()).isEqualTo(6);
-		assertThat(context.comparableSampleSize()).isEqualTo(6);
+		assertThat(context.sampleSize()).isEqualTo(7);
+		assertThat(context.comparableSampleSize()).isEqualTo(7);
 		assertThat(context.configurationCount()).isEqualTo(1);
 		assertThat(snapshot.configurationKey()).isEqualTo("grid-shot:60s:medium");
 		assertThat(snapshot.dataVersion()).isEqualTo(profile.dataVersion());
-		assertThat(snapshot.sourceId()).endsWith(":benchmark");
-		assertThat(snapshot.summaryMetrics()).containsEntry("benchmarkSampleSize", 6d)
+		assertThat(snapshot.sourceId()).contains(":cohort:grid-shot:60s:medium:1:1");
+		assertThat(snapshot.summaryMetrics()).containsEntry("comparableSampleSize", 7d)
 				.containsEntry("recentAccuracy", 85d);
 		assertThat(snapshot.windows()).hasSize(6)
 				.allSatisfy(window -> assertThat(window.metrics())
 						.containsKeys("scorePerMinute", "lastPhaseAccuracy", "phaseAccuracyChange")
 						.doesNotContainKey("score"));
 		assertThat(snapshot.signals()).extracting(TrainingAnalysisSnapshot.Signal::code)
-				.contains("BENCHMARK_BASELINE")
-				.doesNotContain("MIXED_CONFIGURATIONS", "BENCHMARK_SAMPLE_INCOMPLETE");
+				.contains("ACCURACY_LIMITS_PACE")
+				.doesNotContain("BENCHMARK_BASELINE");
 		assertThat(snapshot.comparison()).isNotNull();
 		new TrainingAnalysisPolicy().validate(snapshot);
 	}

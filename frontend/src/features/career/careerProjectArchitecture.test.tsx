@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { aggregateCareerOverview } from "./careerOverviewAggregation";
 import { CareerProjectDirectory } from "./CareerProjectDirectory";
+import { buildCareerDirectoryProjects, filterCareerDirectoryProjects } from "./careerProjectDirectoryFilter";
 import type { CareerProjectDefinition } from "./careerProjectDefinition";
 import type {
   CareerProjectContribution,
@@ -12,10 +13,12 @@ import type {
 import { CareerProjectRegistry } from "./careerProjectRegistry";
 import { gridShotCareerModule } from "./projects/gridShot/gridShotCareerModule";
 import type { GridShotCareerSession } from "../../game/career/gridShotCareer";
+import { trainingCatalogEntries } from "../../game/trainingCatalog";
 
 const fakeDefinition: CareerProjectDefinition = {
   id: "fake-project",
   engineId: "test",
+  difficulty: "development",
   name: ["测试项目", "FAKE PROJECT"],
   eyebrow: ["测试", "TEST"],
   description: ["仅用于架构测试", "Architecture test only"],
@@ -42,15 +45,13 @@ const fakeContribution: CareerProjectContribution = {
     definition: fakeDefinition,
     statusLabel: "观察中",
     sessionCount: 1,
-    benchmarkCount: 0,
     summary: "1 session",
     trend: "observing",
+    coreMetrics: [],
   },
   updatedAt: "2026-07-15T10:00:00.000Z",
   totalSessions: 1,
   totalDurationMs: 30_000,
-  benchmarkSessions: 0,
-  practiceSessions: 1,
   activity: fakeDataset.sessions.map((session) => session),
   abilities: [{
     code: "click-precision",
@@ -75,17 +76,7 @@ const fakeContribution: CareerProjectContribution = {
     grade: "A",
   }],
   trend: [],
-  goal: {
-    eyebrow: "GOAL",
-    title: "Fake goal",
-    description: "Fake description",
-    completed: 0,
-    total: 1,
-    projectId: "fake-project",
-    entryId: "practice",
-    actionLabel: "Start",
-  },
-  recommendation: { title: "Fake goal", description: "Fake description", actionLabel: "Start" },
+  insight: { eyebrow: "SYSTEM", title: "Fake insight", description: "Fake description" },
 };
 
 const fakeModule: CareerProjectModule = {
@@ -110,18 +101,18 @@ function gridContribution(): CareerProjectContribution {
       definition: gridShotCareerModule.definition,
       statusLabel: "稳定档案",
       sessionCount: 2,
-      benchmarkCount: 1,
       summary: "Grid Shot summary",
       trend: "stable",
+      coreMetrics: [
+        { code: "accuracy", label: "平均准确率", value: "90.0%" },
+      ],
     },
     updatedAt: "2026-07-15T09:00:00.000Z",
     totalSessions: 2,
     totalDurationMs: 120_000,
-    benchmarkSessions: 1,
-    practiceSessions: 1,
     activity: [
-      { completedAt: "2026-07-15T09:00:00.000Z", durationMs: 60_000, sessionType: "benchmark" },
-      { completedAt: "2026-07-14T09:00:00.000Z", durationMs: 60_000, sessionType: "practice" },
+      { completedAt: "2026-07-15T09:00:00.000Z", durationMs: 60_000 },
+      { completedAt: "2026-07-14T09:00:00.000Z", durationMs: 60_000 },
     ],
     abilities: gridShotCareerModule.definition.capabilities.map((capability) => ({
       code: capability.code,
@@ -135,17 +126,7 @@ function gridContribution(): CareerProjectContribution {
     })),
     recentSessions: [],
     trend: [],
-    goal: {
-      eyebrow: "GOAL",
-      title: "Grid goal",
-      description: "Grid description",
-      completed: 1,
-      total: 3,
-      projectId: "grid-shot",
-      entryId: "benchmark",
-      actionLabel: "Start",
-    },
-    recommendation: { title: "Grid goal", description: "Grid description", actionLabel: "Start" },
+    insight: { eyebrow: "SYSTEM", title: "Grid insight", description: "Grid description" },
   };
 }
 
@@ -155,12 +136,79 @@ describe("career project module architecture", () => {
     const directory = renderToStaticMarkup(createElement(CareerProjectDirectory, {
       projects: aggregateCareerOverview([gridContribution(), fakeContribution]).projects,
       onOpenProject: () => undefined,
-      onBrowseTraining: () => undefined,
     }));
 
     expect(registry.listModules().map((module) => module.definition.id)).toEqual(["grid-shot", "fake-project"]);
+    expect(gridShotCareerModule.trainingEntries.some((entry) => entry.id === "benchmark")).toBe(true);
+    expect(gridShotCareerModule.definition.benchmark.configurationKey).toBe("grid-shot:60s:medium");
     expect(directory).toContain("测试项目");
+    expect(directory).not.toContain("Browse core data from foundation to elite.");
     expect(renderToStaticMarkup(registry.getModule("fake-project")!.renderProfile({} as never))).toContain("FAKE PROJECT PROFILE");
+  });
+
+  it("searches registered projects without depending on a functional category", () => {
+    const projects = aggregateCareerOverview([gridContribution(), fakeContribution]).projects;
+    const directoryProjects = buildCareerDirectoryProjects(projects, []);
+
+    expect(filterCareerDirectoryProjects(directoryProjects, "").map((project) => project.id)).toEqual(["grid-shot", "fake-project"]);
+    expect(filterCareerDirectoryProjects(directoryProjects, "fake project").map((project) => project.id)).toEqual(["fake-project"]);
+    expect(filterCareerDirectoryProjects(directoryProjects, "architecture").map((project) => project.id)).toEqual(["fake-project"]);
+  });
+
+  it("renders 31 registered projects as real directory cards without placeholder projects", () => {
+    const projects = Array.from({ length: 31 }, (_, index) => ({
+      ...fakeContribution.project,
+      definition: {
+        ...fakeContribution.project.definition,
+        id: `fake-project-${index + 1}`,
+        name: [`测试项目 ${index + 1}`, `FAKE PROJECT ${index + 1}`] as const,
+      },
+    }));
+    const directory = renderToStaticMarkup(createElement(CareerProjectDirectory, {
+      projects,
+      onOpenProject: () => undefined,
+      catalogEntries: [],
+    }));
+
+    expect(directory.match(/class="career-project-card"/g)).toHaveLength(31);
+    expect(directory).not.toContain("02–31");
+  });
+
+  it("groups the 31 planned training projects by difficulty and marks 30 as pending", () => {
+    const directory = renderToStaticMarkup(createElement(CareerProjectDirectory, {
+      projects: aggregateCareerOverview([gridContribution()]).projects,
+      onOpenProject: () => undefined,
+      catalogEntries: trainingCatalogEntries,
+    }));
+
+    expect(directory.match(/class="career-project-card(?: is-pending)?"/g)).toHaveLength(31);
+    expect(directory.match(/class="career-project-card is-pending"/g)).toHaveLength(30);
+    expect(directory.match(/class="career-directory-group"/g)).toHaveLength(4);
+    expect(directory.match(/class="career-project-core-data"/g)).toHaveLength(1);
+    expect(directory).toContain("90.0%");
+    expect(directory).toMatch(/career-directory-result-heading[\s\S]*career-directory-search/);
+  });
+
+  it("adapts project card metrics up to four cells and summarizes additional metrics", () => {
+    const contribution = gridContribution();
+    const project = {
+      ...contribution.project,
+      coreMetrics: Array.from({ length: 6 }, (_, index) => ({
+        code: `metric-${index + 1}`,
+        label: `Metric ${index + 1}`,
+        value: `Value ${index + 1}`,
+      })),
+    };
+    const directory = renderToStaticMarkup(createElement(CareerProjectDirectory, {
+      projects: [project],
+      onOpenProject: () => undefined,
+      catalogEntries: [],
+    }));
+
+    expect(directory).toContain('data-count="4"');
+    expect(directory).toContain("Value 4");
+    expect(directory).not.toContain("Value 5");
+    expect(directory).toContain("+2");
   });
 
   it("dispatches recent records to their owning project renderer", () => {
@@ -177,11 +225,22 @@ describe("career project module architecture", () => {
 
     expect(model.totalSessions).toBe(3);
     expect(model.totalDurationMs).toBe(150_000);
-    expect(model.benchmarkSessions).toBe(1);
-    expect(model.practiceSessions).toBe(2);
     expect(model.weeklySessions).toBe(3);
     expect(model.abilities.find((ability) => ability.code === "click-precision")?.value).toBe("91.0%");
     expect(aggregateCareerOverview([fakeContribution]).abilities[0].value).toBe("-");
+  });
+
+  it("keeps trend labels owned by the project contribution", () => {
+    const contribution = {
+      ...gridContribution(),
+      trend: [
+        { order: 1, completedAt: "2026-07-14T09:00:00.000Z", primary: 10, secondary: 20 },
+        { order: 2, completedAt: "2026-07-15T09:00:00.000Z", primary: 12, secondary: 22 },
+      ],
+      trendLabels: { primary: "Project primary", secondary: "Project secondary" },
+    };
+
+    expect(aggregateCareerOverview([contribution]).trendLabels).toEqual(contribution.trendLabels);
   });
 
   it("does not route an unknown project to Grid Shot", () => {

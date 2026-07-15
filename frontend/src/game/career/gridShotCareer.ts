@@ -294,6 +294,7 @@ export function gridShotCareerDetailToHistoryRecord(
   const analytics = analyzeGridShotEvents(detail.events, {
     sessionDurationMs: detail.session.durationMs,
     activeDurationMs: detail.session.durationMs,
+    sessionId: detail.session.clientSessionId,
   });
   const integrityPassed = detail.session.integrityStatus === "VALID"
     && detail.analysisSnapshot.integrity.passed;
@@ -323,8 +324,6 @@ export function gridShotCareerDetailToHistoryRecord(
     misses: detail.session.misses,
     accuracy: detail.session.accuracy,
     maxCombo: detail.session.maxCombo,
-    averageReactionTime: detail.session.averageHitInterval,
-    fastestReactionTime: analytics.fastestHitInterval,
     targetsPerMinute: detail.session.targetsPerMinute,
     scoreTimeline: analytics.timeline.map((point) => ({ time: point.time, score: point.score })),
     averageHitInterval: detail.session.averageHitInterval,

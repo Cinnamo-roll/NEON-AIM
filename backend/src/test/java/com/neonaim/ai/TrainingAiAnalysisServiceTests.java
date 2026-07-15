@@ -57,6 +57,20 @@ class TrainingAiAnalysisServiceTests {
 	}
 
 	@Test
+	void outdatedPromptAnalysisIsNotReturnedAsReady() {
+		Fixture fixture = fixture(false);
+		TrainingAiAnalysisCall outdated = new TrainingAiAnalysisCall(fixture.userId, fixture.sessionId,
+				"openai-responses:gpt-4o-mini", "gpt-4o-mini", "grid-shot-session-v8",
+				"data-v1", CLOCK.instant());
+		outdated.complete(new TrainingAnalysisProvider.TokenUsage(300, 120), false, CLOCK.instant());
+		fixture.calls.add(outdated);
+
+		TrainingAiAnalysisService.JobView view = fixture.service.latest(fixture.userId, fixture.sessionId);
+
+		assertThat(view.status()).isEqualTo(TrainingAiAnalysisService.JobStatus.NOT_REQUESTED);
+	}
+
+	@Test
 	void providerFailureKeepsTheRuleAnalysisAvailable() {
 		Fixture fixture = fixture(true);
 
@@ -70,17 +84,18 @@ class TrainingAiAnalysisServiceTests {
 	}
 
 	@Test
-	void rejectedAiResultStillRecordsTheTokensAlreadySpent() {
+	void rejectedAiResultIsRecoveredWithGroundedProjectEvidence() {
 		Fixture fixture = fixture(false, true);
 
 		fixture.service.trigger(fixture.userId, fixture.sessionId);
 		TrainingAiAnalysisService.JobView failed = fixture.service.latest(fixture.userId, fixture.sessionId);
 
-		assertThat(failed.status()).isEqualTo(TrainingAiAnalysisService.JobStatus.FAILED);
-		assertThat(failed.failureCode()).isEqualTo("AI_RESPONSE_REJECTED");
+		assertThat(failed.status()).isEqualTo(TrainingAiAnalysisService.JobStatus.READY);
+		assertThat(failed.failureCode()).isNull();
 		assertThat(failed.inputTokens()).isEqualTo(300);
 		assertThat(failed.outputTokens()).isEqualTo(120);
-		assertThat(failed.analysis().source()).isEqualTo(TrainingAnalysisResult.Source.RULES);
+		assertThat(failed.analysis().source()).isEqualTo(TrainingAnalysisResult.Source.AI);
+		assertThat(failed.analysis().findings().getFirst().evidence()).doesNotContain("42.7");
 		assertThat(fixture.providerCalls.get()).isEqualTo(1);
 	}
 
@@ -148,7 +163,7 @@ class TrainingAiAnalysisServiceTests {
 				new InMemoryTrainingAnalysisCache(20), new TrainingAnalysisCostGuard(CLOCK, 10_000));
 		TrainingAiAnalysisService service = new TrainingAiAnalysisService(operations, repository, gateway,
 				providerRegistry, providerSettings, Runnable::run, CLOCK);
-		return new Fixture(service, userId, sessionId, providerCalls);
+		return new Fixture(service, userId, sessionId, providerCalls, calls);
 	}
 
 	private static TrainingAnalysisProvider.AnalysisResult providerResult() {
@@ -196,6 +211,6 @@ class TrainingAiAnalysisServiceTests {
 	}
 
 	private record Fixture(TrainingAiAnalysisService service, UUID userId, UUID sessionId,
-			AtomicReference<Integer> providerCalls) {
+			AtomicReference<Integer> providerCalls, List<TrainingAiAnalysisCall> calls) {
 	}
 }

@@ -43,11 +43,18 @@ import type {
   GridShotHistoryRecord,
   TrainingSettings,
 } from "./game/types/training";
-import { saveGridShotTrainingSession } from "./game/modes/gridShot/gridShotTrainingSessionService";
+import { buildGridShotTrainingSessionSubmission } from "./game/modes/gridShot/gridShotTrainingSessionService";
 import {
   clearRetiredLocalTrainingData,
+  saveTrainingSessionSubmission,
   type TrainingSessionSaveStatus,
 } from "./game/storage/trainingSessionService";
+import {
+  clearPendingGuestTrainingSessions,
+  flushPendingGuestTrainingSessions,
+  hasPendingGuestTrainingSession,
+  stagePendingGuestTrainingSession,
+} from "./game/storage/pendingGuestTrainingSessions";
 import {
   createNeonInputSensitivity,
   normalizeNeonInputSettings,
@@ -107,7 +114,6 @@ type GridSaveState = {
   sessionId?: string;
   serverSessionId?: string;
   status: TrainingSessionSaveStatus;
-  loginRequested?: boolean;
 };
 type Result = {
   mode: ModeId;
@@ -129,7 +135,10 @@ type AppState = {
   gridResult?: GridShotHistoryRecord;
   previousGridResult?: GridShotHistoryRecord;
   gridSaveState: GridSaveState;
+  accountAccessReturnPage?: Page;
   setPage: (p: Page) => void;
+  openAccountAccess: () => void;
+  closeAccountAccess: () => void;
   setMode: (m: ModeId) => void;
   updateSettings: (v: Partial<SettingsData>) => void;
   updateGridShotSettings: (v: Partial<GridShotModeSettings>) => void;
@@ -226,6 +235,7 @@ const pagePath: Record<Page, string> = {
   settings: "/settings",
   qa: "/dev/grid-shot-qa",
 };
+const ACCOUNT_ACCESS_HISTORY_KEY = "neonAccountAccess";
 const useApp = create<AppState>((set, get) => ({
   page: pathPage(),
   mode: "grid",
@@ -249,6 +259,31 @@ const useApp = create<AppState>((set, get) => ({
     if (location.pathname !== pagePath[page]) history.pushState({}, "", pagePath[page]);
     set({ page });
     window.scrollTo({ top: 0, left: 0, behavior: "instant" });
+  },
+  openAccountAccess: () => {
+    const current = get();
+    if (current.page === "profile") return;
+    const returnPage = current.page;
+    current.setPage("profile");
+    history.replaceState({ ...(history.state ?? {}), [ACCOUNT_ACCESS_HISTORY_KEY]: true }, "", pagePath.profile);
+    set({ accountAccessReturnPage: returnPage });
+  },
+  closeAccountAccess: () => {
+    const current = get();
+    const returnPage = current.accountAccessReturnPage;
+    set({ accountAccessReturnPage: undefined });
+    if (!returnPage) {
+      current.setPage("home");
+      return;
+    }
+    const openedFromApp = Boolean(history.state?.[ACCOUNT_ACCESS_HISTORY_KEY]);
+    if (location.pathname === pagePath.profile && openedFromApp) {
+      set({ page: returnPage });
+      history.back();
+      window.scrollTo({ top: 0, left: 0, behavior: "instant" });
+      return;
+    }
+    current.setPage(returnPage);
   },
   setMode: (mode) => set({ mode }),
   updateSettings: (v) =>
@@ -323,8 +358,24 @@ function openGridShotSession(sessionType: GridShotSessionType) {
 function persistGridShotResult(record: GridShotHistoryRecord, authenticated: boolean) {
   const app = useApp.getState();
   const sessionType = record.sessionType ?? app.gridShotSessionType;
+  if (authenticated && hasPendingGuestTrainingSession(record.sessionId)) {
+    void flushGuestTrainingSessionsAndUpdateCurrentResult();
+    return;
+  }
+  let submission: ReturnType<typeof buildGridShotTrainingSessionSubmission>;
+  try {
+    submission = buildGridShotTrainingSessionSubmission(record, app.gridShotSettings, sessionType);
+  } catch {
+    app.setGridSaveState({ sessionId: record.sessionId, status: "failed" });
+    return;
+  }
+  if (!authenticated) {
+    stagePendingGuestTrainingSession(submission);
+    app.setGridSaveState({ sessionId: record.sessionId, status: "login-required" });
+    return;
+  }
   app.setGridSaveState({ sessionId: record.sessionId, status: "saving" });
-  void saveGridShotTrainingSession(record, app.gridShotSettings, sessionType, authenticated).then((result) => {
+  void saveTrainingSessionSubmission(submission, true).then((result) => {
     if (useApp.getState().gridSaveState.sessionId === result.sessionId) {
       useApp.getState().setGridSaveState({
         sessionId: result.sessionId,
@@ -332,6 +383,27 @@ function persistGridShotResult(record: GridShotHistoryRecord, authenticated: boo
         status: result.status,
       });
     }
+  });
+}
+
+function flushGuestTrainingSessionsAndUpdateCurrentResult() {
+  const app = useApp.getState();
+  const currentSessionId = app.gridResult?.sessionId;
+  if (currentSessionId && hasPendingGuestTrainingSession(currentSessionId)) {
+    app.setGridSaveState({ sessionId: currentSessionId, status: "saving" });
+  }
+  return flushPendingGuestTrainingSessions({ prioritizeSessionId: currentSessionId }).then((results) => {
+    if (!currentSessionId) return results;
+    const currentResult = results.find((result) => result.sessionId === currentSessionId);
+    const latest = useApp.getState();
+    if (currentResult && latest.gridResult?.sessionId === currentSessionId) {
+      latest.setGridSaveState({
+        sessionId: currentResult.sessionId,
+        serverSessionId: currentResult.serverSessionId,
+        status: currentResult.status,
+      });
+    }
+    return results;
   });
 }
 
@@ -452,6 +524,7 @@ function TopNavigation() {
   const page = useApp((state) => state.page);
   const settings = useApp((state) => state.settings);
   const setPage = useApp((state) => state.setPage);
+  const openAccountAccess = useApp((state) => state.openAccountAccess);
   const authStatus = useAuthStore((state) => state.status);
   const authUser = useAuthStore((state) => state.user);
   const logout = useAuthStore((state) => state.logout);
@@ -501,7 +574,9 @@ function TopNavigation() {
   };
   const handlePlayerTrigger = () => {
     if (authStatus !== "authenticated") {
-      navigate("profile");
+      setProfileOpen(false);
+      setLogoutArmed(false);
+      openAccountAccess();
       return;
     }
     toggleProfile();
@@ -895,7 +970,6 @@ function ModesPage() {
                       <div className="catalog-card-copy">
                         <div className="catalog-card-labels">
                           <span>{getTrainingCategoryLabel(m.category)}</span>
-                          <b><i /> {tx("可训练", "Playable")}</b>
                         </div>
                         <h3>{m.name}</h3>
                         <p>{copy.description}</p>
@@ -1390,9 +1464,9 @@ function LegacyEnhancedResults() {
         />
         <Stat
           icon={Zap}
-          label="平均反应"
-          value={`${Math.round(r.averageReactionTime)}ms`}
-          hint={`最快 ${Math.round(r.fastestReactionTime)}ms`}
+          label="平均命中间隔"
+          value={`${Math.round(r.averageHitInterval)}ms`}
+          hint={`中位数 ${Math.round(r.medianHitInterval)}ms`}
         />
         <Stat
           icon={Activity}
@@ -1447,8 +1521,8 @@ function Results() {
   const record = useApp((state) => state.gridResult);
   const targetSize = useApp((state) => state.gridShotSettings.targetSize);
   const saveState = useApp((state) => state.gridSaveState);
-  const setGridSaveState = useApp((state) => state.setGridSaveState);
   const setPage = useApp((state) => state.setPage);
+  const openAccountAccess = useApp((state) => state.openAccountAccess);
   const authenticated = useAuthStore((state) => state.status === "authenticated");
   const currentSaveState = saveState.sessionId === record?.sessionId ? saveState : { status: "idle" as const };
   return (
@@ -1460,10 +1534,9 @@ function Results() {
       onAgain={() => setPage("game")}
       onTrainingHome={() => setPage("modes")}
       onOpenSettings={() => setPage("settings")}
-      onLoginToSave={currentSaveState.status === "login-required" ? () => {
+      onLoginToSave={(currentSaveState.status === "login-required" || (!authenticated && currentSaveState.status === "failed")) ? () => {
         if (!record) return;
-        setGridSaveState({ sessionId: record.sessionId, status: "login-required", loginRequested: true });
-        setPage("profile");
+        openAccountAccess();
       } : undefined}
       onRetrySave={authenticated && currentSaveState.status === "failed" && record
         ? () => persistGridShotResult(record, true)
@@ -1724,12 +1797,18 @@ function Slider({
 }
 
 function AccountAccessPage() {
-  const setPage = useApp((state) => state.setPage);
+  const returnPage = useApp((state) => state.accountAccessReturnPage);
+  const closeAccountAccess = useApp((state) => state.closeAccountAccess);
+  const backCopy: readonly [string, string] = returnPage === "results"
+    ? ["返回本局复盘", "Back to session review"]
+    : returnPage === "progress"
+      ? ["返回生涯", "Back to Career"]
+      : ["返回", "Back"];
   return (
     <main className="account-access-page">
       <header className="account-access-header">
         <div className="account-access-brand"><BrandGlyph /><span>NEON <b>AIM</b></span></div>
-        <button className="account-access-back" onClick={() => setPage("home")}><ArrowLeft size={16} />{tx("返回大厅", "Back to lobby")}</button>
+        <button className="account-access-back" onClick={closeAccountAccess}><ArrowLeft size={16} />{tx(...backCopy)}</button>
       </header>
       <div className="account-access-content"><ProfileWorkspace /></div>
     </main>
@@ -1744,6 +1823,7 @@ function App() {
   const gridShotSessionType = useApp((s) => s.gridShotSessionType);
   const careerTargetSize = useApp((s) => s.gridShotSettings.targetSize);
   const setPage = useApp((s) => s.setPage);
+  const openAccountAccess = useApp((s) => s.openAccountAccess);
   const applyAccountPreferences = useApp((s) => s.applyAccountPreferences);
   const restoreGuestPreferences = useApp((s) => s.restoreGuestPreferences);
   const initializeAuth = useAuthStore((s) => s.initialize);
@@ -1786,6 +1866,7 @@ function App() {
     const previous = previousAuthStatus.current;
     previousAuthStatus.current = authStatus;
     if (previous !== "authenticated" || authStatus === "authenticated") return;
+    clearPendingGuestTrainingSessions();
     useApp.getState().setGridResult(undefined);
     useApp.getState().setGridSaveState({ status: "idle" });
     restoreGuestPreferences();
@@ -1793,17 +1874,30 @@ function App() {
   useEffect(() => {
     if (authStatus !== "authenticated") return;
     const app = useApp.getState();
-    const pending = app.gridSaveState;
-    const record = app.gridResult;
-    if (!record || !pending.loginRequested || pending.status !== "login-required" || pending.sessionId !== record.sessionId) return;
-    app.setPage("results");
-    persistGridShotResult(record, true);
+    if (app.accountAccessReturnPage) app.closeAccountAccess();
+    void flushGuestTrainingSessionsAndUpdateCurrentResult();
+  }, [authStatus]);
+  useEffect(() => {
+    if (authStatus !== "authenticated") return;
+    const retryPendingGuestSessions = () => void flushGuestTrainingSessionsAndUpdateCurrentResult();
+    window.addEventListener("online", retryPendingGuestSessions);
+    window.addEventListener("focus", retryPendingGuestSessions);
+    return () => {
+      window.removeEventListener("online", retryPendingGuestSessions);
+      window.removeEventListener("focus", retryPendingGuestSessions);
+    };
   }, [authStatus]);
   useEffect(() => {
     if (page === "profile") window.scrollTo({ top: 0, left: 0, behavior: "instant" });
   }, [authStatus, page]);
   useEffect(() => {
-    const restorePageFromHistory = () => useApp.setState({ page: pathPage() });
+    const restorePageFromHistory = () => {
+      const restoredPage = pathPage();
+      useApp.setState({
+        page: restoredPage,
+        ...(restoredPage === "profile" ? {} : { accountAccessReturnPage: undefined }),
+      });
+    };
     window.addEventListener("popstate", restorePageFromHistory);
     return () => window.removeEventListener("popstate", restorePageFromHistory);
   }, []);
@@ -1840,7 +1934,7 @@ function App() {
                 else setPage("modes");
               }}
               onBrowseTraining={() => setPage("modes")}
-              onLogin={() => setPage("profile")}
+              onLogin={openAccountAccess}
             />
           ) : page === "workshop" || page === "ranking" ? (
             <FutureHubPage kind={page} />

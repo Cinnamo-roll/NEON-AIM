@@ -19,8 +19,10 @@ public final class TrainingAnalysisPolicy {
 	public static final int MAX_COMPARISON_FIELDS = 8;
 	public static final int MAX_FINDINGS = 3;
 
-	private static final TokenBudget SESSION_BUDGET = new TokenBudget(900, 420);
-	private static final TokenBudget CAREER_BUDGET = new TokenBudget(1_800, 450);
+	private static final int SESSION_SNAPSHOT_INPUT_LIMIT = 900;
+	private static final int CAREER_SNAPSHOT_INPUT_LIMIT = 1_800;
+	private static final TokenBudget SESSION_BUDGET = new TokenBudget(1_600, 1_200);
+	private static final TokenBudget CAREER_BUDGET = new TokenBudget(2_800, 1_400);
 	public TokenBudget budgetFor(TrainingAnalysisSnapshot.Scope scope) {
 		return scope == TrainingAnalysisSnapshot.Scope.SESSION ? SESSION_BUDGET : CAREER_BUDGET;
 	}
@@ -66,8 +68,9 @@ public final class TrainingAnalysisPolicy {
 		for (String error : snapshot.integrity().errors()) {
 			validateTextLength(error, "integrity.error", 160);
 		}
-		TokenBudget budget = budgetFor(snapshot.scope());
-		if (estimateInputTokens(snapshot) > budget.maxInputTokens()) {
+		int snapshotInputLimit = snapshot.scope() == TrainingAnalysisSnapshot.Scope.SESSION
+				? SESSION_SNAPSHOT_INPUT_LIMIT : CAREER_SNAPSHOT_INPUT_LIMIT;
+		if (estimateInputTokens(snapshot) > snapshotInputLimit) {
 			throw new IllegalArgumentException("analysis snapshot exceeds its input token budget");
 		}
 	}

@@ -22,7 +22,7 @@ final class OpenAiCompatibleChatProvider implements TrainingAnalysisProvider {
 	private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(30);
 	private static final String OUTPUT_INSTRUCTIONS = """
 
-			Return JSON only, with this structure:
+			Return compact JSON only, with this structure. Keep every string within the length limits from the system instructions:
 			{"headline":"...","summary":"...","findings":[{"code":"...","severity":"POSITIVE|OPPORTUNITY|WARNING","title":"...","evidence":"...","advice":"..."}],"nextAction":{"title":"...","description":"...","targets":[{"metric":"...","label":"...","operator":"AT_LEAST|AT_MOST","value":90,"unit":"..."}]}}
 			""";
 
@@ -172,7 +172,7 @@ final class OpenAiCompatibleChatProvider implements TrainingAnalysisProvider {
 			JsonNode choice = root.path("choices").path(0);
 			String finishReason = choice.path("finish_reason").asString("");
 			if ("length".equals(finishReason)) {
-				throw new ModelProviderException("AI_RESPONSE_INCOMPLETE", "AI 返回内容超出长度限制", null, usage);
+				throw new ModelProviderException("AI_RESPONSE_INCOMPLETE", "AI 回复未完整生成，请重新分析", null, usage);
 			}
 			String content = choice.path("message").path("content").asString("");
 			if (content.isBlank()) {

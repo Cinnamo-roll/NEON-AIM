@@ -34,6 +34,7 @@ function applyAnalytics(
   const analytics = analyzeGridShotEvents(stats.events, {
     sessionDurationMs: stats.sessionDurationMs,
     activeDurationMs,
+    sessionId: stats.sessionId,
   });
   stats.score = analytics.score;
   stats.shots = analytics.shots;
@@ -46,8 +47,6 @@ function applyAnalytics(
   stats.medianHitInterval = analytics.medianHitInterval;
   stats.fastestHitInterval = analytics.fastestHitInterval;
   stats.slowestHitInterval = analytics.slowestHitInterval;
-  stats.averageReactionTime = analytics.averageHitInterval;
-  stats.fastestReactionTime = analytics.fastestHitInterval;
   stats.averageTargetLifetime = analytics.averageTargetLifetime;
   stats.consistencyScore = analytics.consistencyScore;
   stats.baseScoreTotal = analytics.baseScoreTotal;
@@ -89,8 +88,6 @@ export function createEmptyGridShotStats(
     accuracy: 0,
     combo: 0,
     maxCombo: 0,
-    averageReactionTime: 0,
-    fastestReactionTime: 0,
     targetsPerMinute: 0,
     elapsedTime: 0,
     scoreTimeline: [{ time: 0, score: 0 }],

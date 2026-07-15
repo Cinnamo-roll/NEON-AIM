@@ -2,7 +2,7 @@ import { tx } from "../../i18n";
 import type { CareerProjectContribution } from "./careerProjectModule";
 import type {
   CareerOverviewAbility,
-  CareerOverviewGoal,
+  CareerOverviewInsight,
   CareerOverviewModel,
   CareerTrendDirection,
 } from "./careerOverviewModel";
@@ -88,14 +88,11 @@ function aggregateAbilities(contributions: readonly CareerProjectContribution[])
   });
 }
 
-function defaultGoal(): CareerOverviewGoal {
+function defaultInsight(): CareerOverviewInsight {
   return {
-    eyebrow: tx("当前训练目标", "CURRENT TRAINING GOAL"),
-    title: tx("建立第一份训练档案", "Create your first training profile"),
-    description: tx("完成一局训练后，生涯会开始记录项目表现。", "Complete a session to start building your career profile."),
-    completed: 0,
-    total: 1,
-    actionLabel: tx("选择训练", "Choose training"),
+    eyebrow: tx("系统分析", "SYSTEM ANALYSIS"),
+    title: tx("等待第一局训练数据", "Waiting for the first session"),
+    description: tx("完成训练后，这里会根据有效记录总结当前表现。", "Complete a session to receive a summary based on valid records."),
   };
 }
 
@@ -108,31 +105,26 @@ export function aggregateCareerOverview(
   const weeklySessions = allActivity.filter((session) => time(session.completedAt) >= weeklyCutoff);
   const updatedAt = contributions.map((contribution) => contribution.updatedAt)
     .sort((left, right) => time(right) - time(left))[0] ?? null;
-  const goalContribution = contributions
+  const insightContribution = contributions
     .filter((contribution) => contribution.totalSessions > 0)
     .sort((left, right) => time(right.updatedAt) - time(left.updatedAt))[0] ?? contributions[0];
-  const goal = goalContribution?.goal ?? defaultGoal();
   const projectsWithTrend = contributions.filter((contribution) => contribution.trend.length > 0);
+  const trendContribution = projectsWithTrend.length === 1 ? projectsWithTrend[0] : undefined;
   return {
     updatedAt,
     totalSessions: contributions.reduce((sum, contribution) => sum + contribution.totalSessions, 0),
     totalDurationMs: contributions.reduce((sum, contribution) => sum + contribution.totalDurationMs, 0),
-    benchmarkSessions: contributions.reduce((sum, contribution) => sum + contribution.benchmarkSessions, 0),
-    practiceSessions: contributions.reduce((sum, contribution) => sum + contribution.practiceSessions, 0),
     weeklySessions: weeklySessions.length,
     weeklyDurationMs: weeklySessions.reduce((sum, session) => sum + session.durationMs, 0),
-    weeklyBenchmarkSessions: weeklySessions.filter((session) => session.sessionType === "benchmark").length,
-    weeklyPracticeSessions: weeklySessions.filter((session) => session.sessionType === "practice").length,
-    goal,
+    insight: insightContribution?.insight ?? defaultInsight(),
     abilities: aggregateAbilities(contributions),
     projects: contributions.map((contribution) => contribution.project),
     recentSessions: contributions.flatMap((contribution) => contribution.recentSessions)
       .sort((left, right) => time(right.completedAt) - time(left.completedAt)).slice(0, 8),
-    trend: projectsWithTrend.length === 1 ? projectsWithTrend[0].trend : [],
-    recommendation: goalContribution?.recommendation ?? {
-      title: goal.title,
-      description: goal.description,
-      actionLabel: goal.actionLabel,
+    trend: trendContribution?.trend ?? [],
+    trendLabels: trendContribution?.trendLabels ?? {
+      primary: tx("主要指标", "Primary metric"),
+      secondary: tx("辅助指标", "Secondary metric"),
     },
   };
 }

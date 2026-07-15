@@ -24,8 +24,6 @@ function localRecord(overrides: Partial<GridShotHistoryRecord> = {}): GridShotHi
     misses: 10,
     accuracy: 90,
     maxCombo: 20,
-    averageReactionTime: 300,
-    fastestReactionTime: 180,
     targetsPerMinute: 90,
     scoreTimeline: [],
     averageHitInterval: 300,

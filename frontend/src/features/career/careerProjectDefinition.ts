@@ -24,9 +24,12 @@ export interface CareerMetricDefinition {
   direction: "higher-is-better" | "lower-is-better";
 }
 
+export type CareerProjectDifficulty = "foundation" | "development" | "advanced" | "elite";
+
 export interface CareerProjectDefinition {
   id: string;
   engineId: string;
+  difficulty: CareerProjectDifficulty;
   name: LocalizedCareerText;
   eyebrow: LocalizedCareerText;
   description: LocalizedCareerText;

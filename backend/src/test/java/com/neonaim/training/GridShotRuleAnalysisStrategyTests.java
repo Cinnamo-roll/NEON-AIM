@@ -24,11 +24,11 @@ class GridShotRuleAnalysisStrategyTests {
 				]}
 				""");
 
-		assertThat(result.headline()).contains("后程稳定性");
+		assertThat(result.headline()).contains("最后阶段没有守住");
 		assertThat(result.findings()).extracting(TrainingAnalysisResult.Finding::code)
-				.containsExactly("LATE_ACCURACY_DROP");
+				.containsExactly("CONTROL_FOUNDATION", "LATE_ACCURACY_DROP");
 		assertThat(result.nextAction().targets()).extracting(TrainingAnalysisResult.Target::metric)
-				.containsExactly("lastPhaseAccuracy", "consistencyScore");
+				.containsExactly("lastPhaseAccuracy");
 		assertThat(result.usage().totalTokens()).isZero();
 	}
 
@@ -38,9 +38,26 @@ class GridShotRuleAnalysisStrategyTests {
 				"{\"windows\":[]}");
 
 		assertThat(result.findings()).extracting(TrainingAnalysisResult.Finding::code)
-				.containsExactly("PACE_OPPORTUNITY");
+				.containsExactly("CONTROL_FOUNDATION", "PACE_OPPORTUNITY");
 		assertThat(result.nextAction().targets().getFirst().metric()).isEqualTo("averageHitInterval");
 		assertThat(result.nextAction().targets().getFirst().value()).isEqualTo(420);
+	}
+
+	@Test
+	void prioritizesRhythmAndKeepsARealStrengthWhenRhythmGapIsLarger() throws Exception {
+		TrainingAnalysisResult result = analyze(summary(75.8, 172, 321, 20), true,
+				"{\"windows\":[]}");
+
+		assertThat(result.headline()).contains("命中节奏稳定下来");
+		assertThat(result.findings()).extracting(TrainingAnalysisResult.Finding::code)
+				.containsExactly("COMBO_STRENGTH", "RHYTHM_INSTABILITY", "ACCURACY_LIMITS_PACE");
+		assertThat(result.findings().getFirst().severity()).isEqualTo(TrainingAnalysisResult.Severity.POSITIVE);
+		assertThat(result.nextAction().targets()).singleElement().satisfies(target -> {
+			assertThat(target.metric()).isEqualTo("consistencyScore");
+			assertThat(target.value()).isEqualTo(30);
+		});
+		assertThat(result.findings()).extracting(TrainingAnalysisResult.Finding::evidence)
+				.noneMatch(evidence -> evidence.contains("75 以上") || evidence.contains("90% 目标"));
 	}
 
 	@Test
@@ -51,6 +68,41 @@ class GridShotRuleAnalysisStrategyTests {
 		assertThat(result.findings().getFirst().code()).isEqualTo("INTEGRITY_REVIEW_REQUIRED");
 		assertThat(result.nextAction().targets()).extracting(TrainingAnalysisResult.Target::metric)
 				.containsExactly("integrity");
+	}
+
+	@Test
+	void distinguishesLatePaceForControlTradeoffFromGenericAccuracyAdvice() throws Exception {
+		TrainingAnalysisResult result = analyze(summary(90, 135, 430, 85), true, """
+				{"windows":[
+				  {"hits":38,"misses":2,"accuracy":95,"targetsPerMinute":120},
+				  {"hits":44,"misses":3,"accuracy":93.6,"targetsPerMinute":132},
+				  {"hits":50,"misses":9,"accuracy":85,"targetsPerMinute":150}
+				]}
+				""");
+
+		assertThat(result.headline()).contains("后段提速");
+		assertThat(result.findings()).extracting(TrainingAnalysisResult.Finding::code)
+				.contains("PACE_CONTROL_TRADEOFF");
+		assertThat(result.nextAction().targets()).extracting(TrainingAnalysisResult.Target::metric)
+				.containsExactly("lastPhaseAccuracy");
+	}
+
+	@Test
+	void detectsLatePaceLossWithoutAnAccuracyGain() throws Exception {
+		TrainingAnalysisResult result = analyze(summary(92, 140, 390, 84), true, """
+				{"windows":[
+				  {"hits":52,"misses":4,"accuracy":92.9,"targetsPerMinute":156},
+				  {"hits":48,"misses":4,"accuracy":92.3,"targetsPerMinute":144},
+				  {"hits":40,"misses":3,"accuracy":93,"targetsPerMinute":120}
+				]}
+				""");
+
+		assertThat(result.findings()).extracting(TrainingAnalysisResult.Finding::code)
+				.contains("LATE_PACE_DROP");
+		assertThat(result.nextAction().targets()).singleElement().satisfies(target -> {
+			assertThat(target.metric()).isEqualTo("targetsPerMinute");
+			assertThat(target.value()).isEqualTo(145);
+		});
 	}
 
 	private TrainingAnalysisResult analyze(TrainingSessionSubmission.Summary summary, boolean integrityPassed,

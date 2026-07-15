@@ -29,10 +29,11 @@ export interface GridShotDetailSegment extends Omit<TrainingAnalysisWindow, "lab
 export interface GridShotAnalysisBundle {
   detailSegments: GridShotDetailSegment[];
   aiSnapshot: TrainingSessionAnalysisSnapshot;
+  targetSize: GridShotTargetSize;
 }
 
 export interface GridShotAnalysisOptions {
-  targetSize: GridShotTargetSize;
+  targetSize?: GridShotTargetSize;
   baseline?: TrainingAnalysisBaseline;
 }
 
@@ -57,21 +58,37 @@ function summarizeWindow(
 ): TrainingAnalysisWindow {
   const windowEvents = eventsInRange(events, startMs, endMs, final);
   const hits = windowEvents.filter((event) => event.type === "hit");
-  const misses = windowEvents.length - hits.length;
+  const missEvents = windowEvents.filter((event) => event.type === "miss");
+  const misses = missEvents.length;
+  const attempts = hits.length + misses;
   const durationMs = Math.max(0, endMs - startMs);
-  const intervals = hits
-    .map((event) => event.hitIntervalMs)
+  const intervals = hits.slice(1).map((event, index) => Math.max(0, event.elapsedMs - hits[index].elapsedMs));
+  const targetLifetimes = hits
+    .map((event) => event.targetLifetimeMs)
     .filter((value): value is number => value !== undefined && Number.isFinite(value) && value >= 0);
+  const averageInterval = intervals.length ? intervals.reduce((sum, value) => sum + value, 0) / intervals.length : 0;
+  const orderedIntervals = [...intervals].sort((left, right) => left - right);
+  const middle = Math.floor(orderedIntervals.length / 2);
+  const medianInterval = orderedIntervals.length === 0
+    ? 0
+    : orderedIntervals.length % 2
+      ? orderedIntervals[middle]
+      : (orderedIntervals[middle - 1] + orderedIntervals[middle]) / 2;
   return {
     label,
     startMs,
     endMs,
     hits: hits.length,
     misses,
-    accuracy: round(windowEvents.length ? hits.length / windowEvents.length * 100 : 0),
+    accuracy: round(attempts ? hits.length / attempts * 100 : 0),
     targetsPerMinute: round(durationMs ? hits.length / (durationMs / 60_000) : 0),
-    averageHitInterval: round(intervals.length ? intervals.reduce((sum, value) => sum + value, 0) / intervals.length : 0),
+    averageHitInterval: round(averageInterval),
+    medianHitInterval: round(medianInterval),
+    averageTargetLifetime: round(targetLifetimes.length
+      ? targetLifetimes.reduce((sum, value) => sum + value, 0) / targetLifetimes.length
+      : 0),
     consistencyScore: calculateGridShotConsistency(intervals, hits.length, misses),
+    maxCombo: Math.max(0, ...windowEvents.map((event) => event.comboAfter)),
     score: round(windowEvents.reduce((sum, event) => sum + event.totalScore, 0), 0),
   };
 }
@@ -92,9 +109,11 @@ function buildDetailSegments(events: readonly GridShotEvent[], durationMs: numbe
       accuracy: summary.accuracy,
       targetsPerMinute: summary.targetsPerMinute,
       averageHitInterval: summary.averageHitInterval,
+      medianHitInterval: summary.medianHitInterval,
+      averageTargetLifetime: summary.averageTargetLifetime,
       consistencyScore: summary.consistencyScore,
       score: summary.score,
-      maxCombo: Math.max(0, ...segmentEvents.map((event) => event.comboAfter)),
+      maxCombo: Math.max(summary.maxCombo ?? 0, ...segmentEvents.map((event) => event.comboAfter)),
     };
   });
 }
@@ -133,28 +152,70 @@ function buildSignals(
   const last = windows.at(-1);
 
   if (!integrityPassed) {
-    signals.push({ code: "INTEGRITY_REVIEW_REQUIRED", severity: "warning", evidence: {} });
+    return [{ code: "INTEGRITY_REVIEW_REQUIRED", severity: "warning", evidence: {} } satisfies TrainingAnalysisSignal];
+  }
+  if (summary.accuracy >= 90 && summary.consistencyScore >= 75) {
+    signals.push({
+      code: "CONTROL_FOUNDATION",
+      severity: "positive",
+      evidence: {
+        accuracy: summary.accuracy,
+        consistencyScore: summary.consistencyScore,
+        maxCombo: summary.maxCombo,
+      },
+    });
+  } else if (summary.maxCombo >= 8) {
+    signals.push({
+      code: "COMBO_STRENGTH",
+      severity: "positive",
+      evidence: { maxCombo: summary.maxCombo, hits: summary.hits },
+    });
   }
   if (summary.accuracy < 85) {
     signals.push({
       code: "ACCURACY_LIMITS_PACE",
       severity: "opportunity",
-      evidence: { accuracy: summary.accuracy, targetAccuracy: 90 },
+      evidence: { accuracy: summary.accuracy, hits: summary.hits, misses: summary.misses },
     });
   }
   if (first && last && first.hits + first.misses >= 3 && last.hits + last.misses >= 3) {
     const accuracyDelta = round(last.accuracy - first.accuracy);
+    const paceDelta = round(last.targetsPerMinute - first.targetsPerMinute);
     if (accuracyDelta <= -5) {
       signals.push({
-        code: "LATE_ACCURACY_DROP",
+        code: paceDelta >= 10 ? "PACE_CONTROL_TRADEOFF" : "LATE_ACCURACY_DROP",
         severity: "opportunity",
-        evidence: { firstAccuracy: first.accuracy, lastAccuracy: last.accuracy, accuracyDelta },
+        evidence: {
+          firstAccuracy: first.accuracy,
+          lastAccuracy: last.accuracy,
+          accuracyDelta,
+          firstTargetsPerMinute: first.targetsPerMinute,
+          lastTargetsPerMinute: last.targetsPerMinute,
+          targetsPerMinuteDelta: paceDelta,
+        },
       });
-    } else if (accuracyDelta >= 5 && last.targetsPerMinute >= first.targetsPerMinute) {
+    } else if (accuracyDelta >= 5 && last.accuracy >= summary.accuracy
+      && last.targetsPerMinute >= first.targetsPerMinute) {
       signals.push({
         code: "STRONG_FINISH",
         severity: "positive",
-        evidence: { firstAccuracy: first.accuracy, lastAccuracy: last.accuracy, accuracyDelta },
+        evidence: {
+          firstAccuracy: first.accuracy,
+          lastAccuracy: last.accuracy,
+          accuracyDelta,
+          targetsPerMinuteDelta: paceDelta,
+        },
+      });
+    } else if (paceDelta <= -Math.max(10, first.targetsPerMinute * 0.1) && accuracyDelta < 3) {
+      signals.push({
+        code: "LATE_PACE_DROP",
+        severity: "opportunity",
+        evidence: {
+          firstTargetsPerMinute: first.targetsPerMinute,
+          lastTargetsPerMinute: last.targetsPerMinute,
+          targetsPerMinuteDelta: paceDelta,
+          accuracyDelta,
+        },
       });
     }
   }
@@ -162,17 +223,60 @@ function buildSignals(
     signals.push({
       code: "RHYTHM_INSTABILITY",
       severity: "opportunity",
-      evidence: { consistencyScore: summary.consistencyScore, targetConsistency: 75 },
+      evidence: {
+        consistencyScore: summary.consistencyScore,
+        averageHitInterval: summary.averageHitInterval,
+        maxCombo: summary.maxCombo,
+      },
     });
   }
   if (summary.accuracy >= 90 && summary.averageHitInterval > 400) {
     signals.push({
       code: "PACE_OPPORTUNITY",
-      severity: "positive",
-      evidence: { accuracy: summary.accuracy, averageHitInterval: summary.averageHitInterval },
+      severity: "opportunity",
+      evidence: {
+        accuracy: summary.accuracy,
+        averageHitInterval: summary.averageHitInterval,
+        medianHitInterval: summary.medianHitInterval ?? summary.averageHitInterval,
+      },
     });
   }
-  return signals.slice(0, TRAINING_ANALYSIS_LIMITS.maxSignals);
+  if (!signals.some((signal) => signal.severity === "positive")) {
+    const candidates = windows
+      .map((window, index) => ({ window, index }))
+      .filter(({ window }) => window.hits + window.misses >= 3)
+      .sort((left, right) => right.window.accuracy - left.window.accuracy
+        || right.window.targetsPerMinute - left.window.targetsPerMinute);
+    const best = candidates[0];
+    if (best) {
+      signals.push({
+        code: "BEST_PHASE_CONTROL",
+        severity: "positive",
+        evidence: {
+          phase: best.index + 1,
+          accuracy: best.window.accuracy,
+          targetsPerMinute: best.window.targetsPerMinute,
+          hits: best.window.hits,
+          misses: best.window.misses,
+        },
+      });
+    }
+  }
+  const opportunityScore = (signal: TrainingAnalysisSignal) => {
+    if (signal.code === "RHYTHM_INSTABILITY") return (70 - summary.consistencyScore) / 70;
+    if (signal.code === "ACCURACY_LIMITS_PACE") return (85 - summary.accuracy) / 25;
+    if (signal.code === "LATE_ACCURACY_DROP") return Math.min(1, Math.abs(signal.evidence.accuracyDelta ?? 0) / 20);
+    if (signal.code === "PACE_CONTROL_TRADEOFF") return Math.min(1, Math.abs(signal.evidence.accuracyDelta ?? 0) / 15);
+    if (signal.code === "LATE_PACE_DROP") return Math.min(1, Math.abs(signal.evidence.targetsPerMinuteDelta ?? 0) / 40);
+    if (signal.code === "PACE_OPPORTUNITY") return Math.max(0, (summary.averageHitInterval - 400) / 200);
+    return 0;
+  };
+  const warnings = signals.filter((signal) => signal.severity === "warning");
+  const positives = signals.filter((signal) => signal.severity === "positive");
+  const opportunities = signals
+    .filter((signal) => signal.severity === "opportunity")
+    .sort((left, right) => opportunityScore(right) - opportunityScore(left));
+  return [...warnings, ...positives.slice(0, 2), ...opportunities].slice(0, TRAINING_ANALYSIS_LIMITS.maxSignals);
 }
 
 export function buildGridShotAnalysisBundle(
@@ -180,9 +284,15 @@ export function buildGridShotAnalysisBundle(
   options: GridShotAnalysisOptions,
 ): GridShotAnalysisBundle {
   const durationMs = Math.max(0, record.duration * 1_000);
-  const events = [...(record.events ?? [])].sort((left, right) => left.elapsedMs - right.elapsedMs || left.timestamp - right.timestamp);
-  const analytics = analyzeGridShotEvents(events, { sessionDurationMs: durationMs, activeDurationMs: durationMs });
+  const sourceEvents = record.events ?? [];
+  const analytics = analyzeGridShotEvents(sourceEvents, {
+    sessionDurationMs: durationMs,
+    activeDurationMs: durationMs,
+    sessionId: record.sessionId,
+  });
+  const events = [...sourceEvents].sort((left, right) => left.elapsedMs - right.elapsedMs || left.timestamp - right.timestamp);
   const windows = buildAnalysisWindows(events, durationMs);
+  const targetSize = record.configuration?.targetSize ?? options.targetSize ?? "medium";
   const summary: TrainingSessionAnalysisSnapshot["summary"] = {
     score: round(analytics.score, 0),
     hits: analytics.hits,
@@ -190,12 +300,17 @@ export function buildGridShotAnalysisBundle(
     accuracy: round(analytics.accuracy),
     targetsPerMinute: round(analytics.targetsPerMinute),
     averageHitInterval: round(analytics.averageHitInterval),
+    medianHitInterval: round(analytics.medianHitInterval),
+    fastestHitInterval: round(analytics.fastestHitInterval),
+    slowestHitInterval: round(analytics.slowestHitInterval),
+    averageTargetLifetime: round(analytics.averageTargetLifetime),
     consistencyScore: round(analytics.consistencyScore, 0),
     maxCombo: analytics.maxCombo,
     grade: analytics.grade.grade,
   };
   return {
     detailSegments: buildDetailSegments(events, durationMs),
+    targetSize,
     aiSnapshot: {
       schemaVersion: TRAINING_ANALYSIS_SCHEMA_VERSION,
       scope: "session",
@@ -203,7 +318,7 @@ export function buildGridShotAnalysisBundle(
         id: "grid-shot",
         modeVersion: GRID_SHOT_MODE_VERSION,
         scoringVersion: GRID_SHOT_SCORING_VERSION,
-        configurationKey: `grid-shot:${record.duration}s:${options.targetSize}`,
+        configurationKey: `grid-shot:${record.duration}s:${targetSize}`,
       },
       source: { sessionId: record.sessionId, completedAt: record.createdAt },
       summary,

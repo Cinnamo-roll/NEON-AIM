@@ -21,8 +21,6 @@ export interface GridShotSessionStats {
   accuracy: number;
   combo: number;
   maxCombo: number;
-  averageReactionTime: number;
-  fastestReactionTime: number;
   targetsPerMinute: number;
   elapsedTime: number;
   scoreTimeline: ScorePoint[];

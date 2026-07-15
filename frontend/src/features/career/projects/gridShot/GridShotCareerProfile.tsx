@@ -6,13 +6,11 @@ import {
   BarChart3,
   BrainCircuit,
   CalendarDays,
-  CheckCircle2,
   ChevronRight,
   Clock3,
   CloudOff,
   Crosshair,
   Gauge,
-  Flag,
   LoaderCircle,
   Play,
   RefreshCw,
@@ -35,21 +33,13 @@ import {
   type TrainingCareerAiConfidence,
   type TrainingCareerAiJob,
 } from "../../../../game/analysis/trainingCareerAiAnalysisService";
-import {
-  adoptTrainingCoachingTask,
-  type TrainingCoachingTask,
-} from "../../../../game/analysis/trainingCoachingTaskService";
 import type { TrainingAnalysisTarget } from "../../../../game/analysis/trainingAnalysis";
-import {
-  isGridShotBenchmarkSession,
-  summarizeGridShotCareer,
-} from "../../../../game/career/gridShotCareer";
+import { summarizeGridShotCareer } from "../../../../game/career/gridShotCareer";
 import {
   type TrainingCareerDimensionProfile,
   type TrainingCareerMetricProfile,
   type TrainingCareerProfileConfidence,
 } from "../../../../game/career/trainingCareerProfileService";
-import { GRID_SHOT_BENCHMARK } from "../../../../game/modes/gridShot/gridShotConfig";
 import { getAppLanguage, tx } from "../../../../i18n";
 import type { GridShotCareerProjectData } from "./gridShotCareerProjectData";
 import "../../../../pages/careerPage.css";
@@ -58,15 +48,11 @@ interface GridShotCareerProfileProps {
   data: GridShotCareerProjectData;
   loading: boolean;
   authenticated: boolean;
-  isAdmin: boolean;
   onBack: () => void;
   onRefresh: () => void;
   onOpenSession: (sessionKey: string) => void;
-  onStartTraining: (entryId: string) => void;
   onBrowseTraining: () => void;
 }
-
-type CareerScope = "benchmark" | "all";
 
 const number = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 
@@ -108,7 +94,7 @@ function profileConfidenceLabel(confidence: TrainingCareerProfileConfidence) {
   if (confidence === "DEVELOPING") return tx("成长档案", "Developing profile");
   if (confidence === "INITIAL") return tx("初步档案", "Initial profile");
   if (confidence === "OBSERVING") return tx("数据观察中", "Collecting data");
-  return tx("等待基准记录", "Awaiting benchmark");
+  return tx("等待有效记录", "Awaiting valid sessions");
 }
 
 function abilityLabel(code: TrainingCareerDimensionProfile["code"]) {
@@ -167,52 +153,31 @@ export function GridShotCareerProfile({
   data,
   loading,
   authenticated,
-  isAdmin,
   onBack,
   onRefresh,
   onOpenSession,
-  onStartTraining,
   onBrowseTraining,
 }: GridShotCareerProfileProps) {
   const sessions = data.sessions;
   const careerProfile = data.profile;
   const loadError = data.notice;
   const [showAll, setShowAll] = useState(false);
-  const [scope, setScope] = useState<CareerScope>("benchmark");
   const [careerAiJob, setCareerAiJob] = useState<TrainingCareerAiJob>();
   const [careerAiError, setCareerAiError] = useState("");
-  const [coachingTask, setCoachingTask] = useState<TrainingCoachingTask | null>(data.coachingTask);
-  const [coachingError, setCoachingError] = useState("");
-  const [adoptingGoal, setAdoptingGoal] = useState(false);
   const authStatus = authenticated ? "authenticated" : "anonymous";
-  const onStartBenchmark = () => onStartTraining("benchmark");
+  const overview = useMemo(() => summarizeGridShotCareer(sessions), [sessions]);
+  const comparable = useMemo(() => {
+    if (!careerProfile?.cohort) return [];
+    return sessions.filter((session) => session.integrityStatus === "VALID"
+      && session.configurationKey === careerProfile.cohort?.configurationKey
+      && session.modeVersion === careerProfile.cohort?.modeVersion
+      && session.scoringVersion === careerProfile.cohort?.scoringVersion);
+  }, [careerProfile?.cohort, sessions]);
+  const trendOverview = useMemo(() => summarizeGridShotCareer(comparable), [comparable]);
+  const comparableValidSessions = careerProfile?.sample.comparableSessions ?? 0;
 
   useEffect(() => {
-    setCoachingTask(data.coachingTask);
-  }, [data.coachingTask]);
-
-  const benchmarkSessions = useMemo(
-    () => sessions.filter(isGridShotBenchmarkSession),
-    [sessions],
-  );
-  const scopedSessions = scope === "benchmark" ? benchmarkSessions : sessions;
-  const overview = useMemo(() => summarizeGridShotCareer(scopedSessions), [scopedSessions]);
-  const benchmarkOverview = useMemo(
-    () => summarizeGridShotCareer(benchmarkSessions),
-    [benchmarkSessions],
-  );
-  const cloudBenchmarkValidSessions = benchmarkSessions.filter((session) => (
-    session.source === "cloud" && session.integrityStatus === "VALID"
-  )).length;
-  const benchmarkNextMilestone = benchmarkOverview.validSessions < 3
-    ? 3
-    : benchmarkOverview.validSessions < 5
-      ? 5
-      : 10;
-  const benchmarkRemaining = Math.max(0, benchmarkNextMilestone - benchmarkOverview.validSessions);
-
-  useEffect(() => {
-    if (authStatus !== "authenticated" || cloudBenchmarkValidSessions < 3) return;
+    if (authStatus !== "authenticated" || comparableValidSessions < 3) return;
     let active = true;
     void getTrainingCareerAiAnalysis("grid-shot").then((job) => {
       if (active) setCareerAiJob(job);
@@ -220,7 +185,7 @@ export function GridShotCareerProfile({
       if (active) setCareerAiError(tx("暂时无法读取综合分析状态", "Could not load career analysis status"));
     });
     return () => { active = false; };
-  }, [authStatus, cloudBenchmarkValidSessions]);
+  }, [authStatus, comparableValidSessions]);
 
   useEffect(() => {
     if (authStatus !== "authenticated" || careerAiJob?.status !== "PENDING") return;
@@ -239,7 +204,7 @@ export function GridShotCareerProfile({
   }, [authStatus, careerAiJob?.status]);
 
   const triggerCareerAi = async () => {
-    if (authStatus !== "authenticated" || cloudBenchmarkValidSessions < 3
+    if (authStatus !== "authenticated" || comparableValidSessions < 3
       || careerAiJob?.status === "PENDING") return;
     setCareerAiError("");
     try {
@@ -249,45 +214,14 @@ export function GridShotCareerProfile({
     }
   };
 
-  const startWithCareerGoal = async () => {
-    const callId = careerAiJob?.callId;
-    if (!callId || careerAiJob.status !== "READY" || !careerAiJob.analysis || adoptingGoal) return;
-    if (coachingTask?.status === "ACTIVE" && coachingTask.sourceAnalysisCallId === callId) {
-      onStartBenchmark();
-      return;
-    }
-    setAdoptingGoal(true);
-    setCoachingError("");
-    try {
-      const task = await adoptTrainingCoachingTask("grid-shot", callId);
-      setCoachingTask(task);
-      onStartBenchmark();
-    } catch (error) {
-      setCoachingError(error instanceof Error ? error.message : tx("训练目标启用失败", "Could not activate this training goal"));
-    } finally {
-      setAdoptingGoal(false);
-    }
-  };
-
-  const activeCoachingTask = coachingTask?.status === "ACTIVE" ? coachingTask : null;
-  const baselineGoal = benchmarkOverview.validSessions < 3
-    ? { completed: benchmarkOverview.validSessions, total: 3, title: tx("建立第一份 Grid Shot 基线", "Establish your first Grid Shot baseline"), description: tx("完成三局固定配置训练，生涯才能开始判断趋势。", "Complete three fixed-configuration runs so career can begin judging trends.") }
-    : benchmarkOverview.validSessions < 10
-      ? { completed: benchmarkOverview.validSessions, total: benchmarkNextMilestone, title: tx("把初步档案练成稳定基线", "Turn the early profile into a stable baseline"), description: tx(`再完成 ${benchmarkRemaining} 局基准训练，提升档案可信度。`, `Complete ${benchmarkRemaining} more benchmark runs to improve profile confidence.`) }
-      : { completed: 10, total: 10, title: tx("稳定基线已经建立", "Stable baseline established"), description: tx("继续训练以观察长期变化，或进入项目档案查看具体指标。", "Keep training to reveal long-term change, or open the project profile for detailed metrics.") };
-  const overviewGoal = activeCoachingTask ? {
-    eyebrow: tx("当前训练目标", "CURRENT TRAINING GOAL"),
-    title: activeCoachingTask.title,
-    description: activeCoachingTask.description,
-    completed: activeCoachingTask.progress.attemptsCompleted,
-    total: activeCoachingTask.progress.maxAttempts,
-    actionLabel: tx("继续目标训练", "Continue goal"),
-  } : {
-    eyebrow: tx("当前训练目标", "CURRENT TRAINING GOAL"),
-    ...baselineGoal,
-    actionLabel: tx("开始基准训练", "Start benchmark"),
-  };
-  const visibleSessions = showAll ? scopedSessions : scopedSessions.slice(0, 12);
+  const systemFinding = !overview.validSessions
+    ? { title: tx("等待有效训练数据", "Waiting for valid training data"), description: tx("完成训练后，系统会从准确率、速度、稳定度和阶段表现中生成解读。", "Complete a session to generate a readout from accuracy, pace, consistency, and phase performance.") }
+    : trendOverview.recentScoreDeltaPercent !== null && trendOverview.recentScoreDeltaPercent > 2
+      ? { title: tx("近期整体表现正在提升", "Recent overall performance is improving"), description: tx("当前变化来自同配置记录；系统会继续确认准度、速度与稳定度能否同步保持。", "The change comes from comparable sessions; the system will keep checking whether accuracy, pace, and consistency hold together.") }
+      : trendOverview.recentScoreDeltaPercent !== null && trendOverview.recentScoreDeltaPercent < -2
+        ? { title: tx("近期整体表现有所回落", "Recent overall performance has declined"), description: tx("先查看下方能力维度和单局分析，只针对最明显的一项变化进行调整。", "Review the capability dimensions and session analysis, then adjust only the clearest change.") }
+        : { title: tx("当前表现整体稳定", "Current performance is stable"), description: tx("暂未发现明确变化，系统会继续根据同配置有效记录更新判断。", "No clear change is evident; the system will keep updating from comparable valid sessions.") };
+  const visibleSessions = showAll ? sessions : sessions.slice(0, 12);
 
   return (
     <main className="workspace-main career-page career-home">
@@ -300,41 +234,16 @@ export function GridShotCareerProfile({
         <div className="career-hero-copy">
           <span>GRID SHOT · {tx("生涯档案", "CAREER PROFILE")}</span>
           <h1>{tx("你的瞄准能力，正在形成清晰轨迹", "Your aim is becoming a clear progression")}</h1>
-          <p>{tx("基准训练用于建立可比较的生涯基线；自由练习会保留记录，但不会干扰长期趋势。", "Benchmarks build a comparable career baseline. Free practice stays in history without affecting the long-term trend.")}</p>
+          <p>{tx("每一局有效训练都会进入项目档案；趋势只比较配置一致的记录，避免不同难度互相干扰。", "Every valid session contributes to the profile; trends compare matching setups so different difficulties do not distort the result.")}</p>
           <div className="career-hero-actions">
-            <button type="button" onClick={onStartBenchmark}><Play size={16} fill="currentColor" />{tx("开始基准训练", "Start benchmark")}</button>
-            <button type="button" className="secondary" onClick={onBrowseTraining}>{tx("自由练习", "Free practice")}</button>
+            <button type="button" onClick={onBrowseTraining}><Play size={16} fill="currentColor" />{tx("选择训练", "Choose training")}</button>
           </div>
         </div>
         <div className="career-personal-best">
-          <small>{scope === "benchmark" ? tx("基准训练最佳效率", "Benchmark best pace") : tx("全部训练最佳效率", "All-session best pace")}</small>
+          <small>{tx("全部训练最佳效率", "All-session best pace")}</small>
           <strong>{overview.bestScorePerMinute ? formatNumber(overview.bestScorePerMinute) : "-"}</strong>
           <em>{tx("分 / 分钟", "pts / min")}</em>
           <span>{overview.validSessions ? `${overview.validSessions} ${tx("局有效记录", "valid sessions")}` : tx("等待第一局成绩", "Awaiting first session")}</span>
-        </div>
-      </section>
-
-      <section className="career-benchmark-rail">
-        <div className="career-benchmark-definition">
-          <span><Target size={16} /></span>
-          <div>
-            <small>{tx("基准训练", "Benchmark")}</small>
-            <b>{GRID_SHOT_BENCHMARK.duration}s · {tx("中型靶", "Medium targets")} · {GRID_SHOT_BENCHMARK.activeTargetCount} {tx("个同时目标", "active targets")}</b>
-          </div>
-        </div>
-        <div className="career-benchmark-progress">
-          <div>
-            <strong>{benchmarkOverview.validSessions}<small>/10</small></strong>
-            <p>{benchmarkOverview.validSessions >= 10
-              ? tx("稳定基线已建立", "Stable baseline established")
-              : tx(`再完成 ${benchmarkRemaining} 局，解锁${benchmarkNextMilestone === 3 ? "初步档案" : benchmarkNextMilestone === 5 ? "成长档案" : "稳定档案"}`, `${benchmarkRemaining} more to unlock the ${benchmarkNextMilestone === 3 ? "initial profile" : benchmarkNextMilestone === 5 ? "growth profile" : "stable profile"}`)}</p>
-          </div>
-          <span className="career-benchmark-track"><i style={{ width: `${Math.min(100, benchmarkOverview.validSessions * 10)}%` }} /></span>
-          <div className="career-benchmark-milestones"><span className={benchmarkOverview.validSessions >= 3 ? "reached" : ""}>3 · {tx("初步档案", "Initial")}</span><span className={benchmarkOverview.validSessions >= 5 ? "reached" : ""}>5 · {tx("成长档案", "Growth")}</span><span className={benchmarkOverview.validSessions >= 10 ? "reached" : ""}>10 · {tx("稳定档案", "Stable")}</span></div>
-        </div>
-        <div className="career-scope-switch" role="group" aria-label={tx("生涯数据范围", "Career data scope")}>
-          <button type="button" className={scope === "benchmark" ? "active" : ""} onClick={() => { setScope("benchmark"); setShowAll(false); }}>{tx("基准记录", "Benchmark")}<b>{benchmarkSessions.length}</b></button>
-          <button type="button" className={scope === "all" ? "active" : ""} onClick={() => { setScope("all"); setShowAll(false); }}>{tx("全部记录", "All sessions")}<b>{sessions.length}</b></button>
         </div>
       </section>
 
@@ -345,11 +254,10 @@ export function GridShotCareerProfile({
         <CareerMetric icon={Gauge} label={tx("目标切换", "Target pace")} value={overview.validSessions ? overview.averageTargetsPerMinute.toFixed(1) : "-"} note={`TPM · ${tx("最高连击", "Best streak")} ×${overview.bestCombo}`} />
       </section>
 
-      {benchmarkOverview.validSessions >= 3 && (
-        <section className="career-data-panel career-ai-panel" data-state={careerAiJob?.status ?? "NOT_REQUESTED"}>
+      <section className="career-data-panel career-ai-panel" data-state={careerAiJob?.status ?? "NOT_REQUESTED"}>
           <header>
             <div><BrainCircuit size={16} /><h2>{tx("AI 训练教练", "AI training coach")}</h2></div>
-            <span>{confidenceLabel(careerAiJob?.confidence ?? (benchmarkOverview.validSessions >= 10 ? "STABLE" : benchmarkOverview.validSessions >= 5 ? "LOW" : "INITIAL"))}</span>
+            <span>{confidenceLabel(careerAiJob?.confidence ?? (comparableValidSessions >= 10 ? "STABLE" : comparableValidSessions >= 5 ? "LOW" : "INITIAL"))}</span>
           </header>
           <div className="career-ai-body">
             <div className="career-ai-copy">
@@ -365,48 +273,21 @@ export function GridShotCareerProfile({
                     ))}
                   </div>
                   <div className="career-ai-next">
-                    <div><small>{tx("下一阶段目标", "Next focus")}</small><b>{careerAiJob.analysis.nextAction.title}</b><p>{careerAiJob.analysis.nextAction.description}</p></div>
+                    <div><small>{tx("建议", "Suggestion")}</small><b>{careerAiJob.analysis.nextAction.title}</b><p>{careerAiJob.analysis.nextAction.description}</p></div>
                     <div>{careerAiJob.analysis.nextAction.targets.map((target) => <span key={target.metric}><small>{target.label}</small><b>{targetValue(target)}</b></span>)}</div>
                   </div>
-                  {isAdmin && <div className="career-ai-task-actions">
-                    <div data-state={coachingTask?.status ?? "NONE"}>
-                      {coachingTask?.status === "ACTIVE"
-                        ? <><Flag size={14} /><span>{coachingTask.sourceAnalysisCallId === careerAiJob.callId
-                          ? tx(`本轮目标 ${coachingTask.progress.attemptsCompleted}/${coachingTask.progress.maxAttempts} · 每项目标需通过 ${coachingTask.progress.requiredPasses} 次`, `Current goal ${coachingTask.progress.attemptsCompleted}/${coachingTask.progress.maxAttempts} · each target needs ${coachingTask.progress.requiredPasses} passes`)
-                          : tx("已有一轮训练目标进行中", "Another training goal is active")}</span></>
-                        : coachingTask?.status === "COMPLETED" && coachingTask.evaluation
-                          ? <><CheckCircle2 size={14} /><span>{tx("上次目标", "Previous goal")} · {coachingTask.progress.attemptsCompleted} {tx("局", "runs")} · {coachingTask.evaluation.status === "ACHIEVED" ? tx("已达成", "achieved") : coachingTask.evaluation.status === "PARTIAL" ? tx("部分达成", "partially achieved") : tx("未达成", "not achieved")}</span></>
-                          : <><Flag size={14} /><span>{tx("把建议变成下一局可验收目标", "Turn this advice into a measurable next run")}</span></>}
-                    </div>
-                    <button type="button" disabled={adoptingGoal} onClick={() => void startWithCareerGoal()}>
-                      {adoptingGoal ? <LoaderCircle className="spin" size={15} /> : <Play size={15} fill="currentColor" />}
-                      {coachingTask?.status === "ACTIVE" && coachingTask.sourceAnalysisCallId === careerAiJob.callId
-                        ? tx(`继续第 ${coachingTask.progress.attemptsCompleted + 1} 局`, `Continue with run ${coachingTask.progress.attemptsCompleted + 1}`)
-                        : tx("采用目标并开始", "Adopt goal and start")}
-                    </button>
-                  </div>}
-                  {isAdmin && coachingTask?.status === "ACTIVE" && coachingTask.sourceAnalysisCallId === careerAiJob.callId && (
-                    <div className="career-coaching-progress">
-                      {coachingTask.progress.targets.map((target) => (
-                        <span key={target.metric} data-achieved={target.achieved}>
-                          <small>{target.label}</small>
-                          <b>{target.passCount}/{target.requiredPasses} {tx("次通过", "passes")}</b>
-                        </span>
-                      ))}
-                    </div>
-                  )}
                 </>
               ) : (
                 <>
-                  <h3>{benchmarkOverview.validSessions < 3
-                    ? tx("先完成 3 局基准训练", "Complete three benchmark runs first")
-                    : tx("生涯基线可以开始分析", "The benchmark is ready for analysis")}</h3>
-                  <p>{benchmarkOverview.validSessions < 3
-                    ? tx(`当前已有 ${benchmarkOverview.validSessions} 局基准记录，再完成 ${3 - benchmarkOverview.validSessions} 局即可生成初步综合分析。`, `${benchmarkOverview.validSessions} benchmark runs saved. Complete ${3 - benchmarkOverview.validSessions} more to unlock the initial analysis.`)
-                    : tx(`${benchmarkOverview.validSessions} 局基准记录将用于本次分析，自由练习不会混入趋势。`, `${benchmarkOverview.validSessions} matching benchmark runs will be analyzed; free practice is excluded from the trend.`)}</p>
+                  <h3>{comparableValidSessions < 3
+                    ? tx("同配置数据暂时不足", "Not enough comparable data yet")
+                    : tx("当前记录可以进行综合分析", "The current records are ready for analysis")}</h3>
+                  <p>{comparableValidSessions < 3
+                    ? tx(`当前配置有 ${comparableValidSessions} 局有效记录。AI 只比较配置一致的数据，避免把难度差异误判为能力变化。`, `The current setup has ${comparableValidSessions} valid sessions. AI compares matching setups only, so difficulty changes are not mistaken for skill changes.`)
+                    : tx(`${comparableValidSessions} 局同配置有效记录将用于本次分析，训练类型不会影响档案资格。`, `${comparableValidSessions} valid matching sessions will be analyzed; session type does not affect profile eligibility.`)}</p>
                 </>
               )}
-              {(careerAiError || (isAdmin && coachingError) || careerAiJob?.failureMessage) && <div className="career-ai-error"><ShieldAlert size={14} />{careerAiJob?.failureMessage || (isAdmin ? coachingError : "") || careerAiError}</div>}
+              {(careerAiError || careerAiJob?.failureMessage) && <div className="career-ai-error"><ShieldAlert size={14} />{careerAiJob?.failureMessage || careerAiError}</div>}
               {careerAiJob?.status === "READY" && (
                 <small className="career-ai-usage">{careerAiJob.cacheHit
                   ? tx("已命中数据缓存，本次未再次消耗 Token。", "Cached result; no additional tokens used.")
@@ -415,35 +296,32 @@ export function GridShotCareerProfile({
             </div>
             <button
               type="button"
-              disabled={cloudBenchmarkValidSessions < 3 || careerAiJob?.status === "PENDING"}
-              title={cloudBenchmarkValidSessions < 3 ? tx("至少需要 3 局已同步的基准记录", "At least three synced benchmark runs are required") : undefined}
+              disabled={comparableValidSessions < 3 || careerAiJob?.status === "PENDING"}
+              title={comparableValidSessions < 3 ? tx("至少需要 3 局同配置有效记录", "At least three valid matching sessions are required") : undefined}
               onClick={() => void triggerCareerAi()}
             >
               {careerAiJob?.status === "PENDING" ? <LoaderCircle className="spin" size={16} /> : <Sparkles size={16} />}
-              {cloudBenchmarkValidSessions < 3
-                ? tx(`还需 ${3 - cloudBenchmarkValidSessions} 局`, `${3 - cloudBenchmarkValidSessions} more runs`)
+              {comparableValidSessions < 3
+                ? tx("数据不足", "Insufficient data")
                 : careerAiJob?.status === "READY" && careerAiJob.stale
                   ? tx("按最新记录重新分析", "Analyze latest sessions")
                   : tx("生成综合分析", "Generate analysis")}
             </button>
           </div>
-        </section>
-      )}
+      </section>
 
       <section className="career-overview-grid">
         <section className="career-data-panel career-trend-panel">
           <header>
             <div><Activity size={16} /><h2>{tx("最近表现趋势", "Recent performance")}</h2></div>
-            <span>{scope === "benchmark"
-              ? tx("仅比较基准训练记录", "Benchmark runs only")
-              : overview.configurationCount > 1
-              ? tx(`混合 ${overview.configurationCount} 种配置，得分已按分钟归一`, `${overview.configurationCount} configurations · score normalized per minute`)
-              : tx("最近 16 局有效记录", "Last 16 valid sessions")}</span>
+            <span>{careerProfile?.cohort
+              ? tx(`${comparableValidSessions} 局同配置有效记录`, `${comparableValidSessions} valid matching sessions`)
+              : tx("等待可比较记录", "Waiting for comparable sessions")}</span>
           </header>
-          {overview.trend.length > 1 ? (
+          {trendOverview.trend.length > 1 ? (
             <div className="career-chart">
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={overview.trend} margin={{ top: 12, right: 10, bottom: 0, left: -18 }}>
+                <LineChart data={trendOverview.trend} margin={{ top: 12, right: 10, bottom: 0, left: -18 }}>
                   <CartesianGrid stroke="#17313a" vertical={false} />
                   <XAxis dataKey="order" stroke="#59717a" tickLine={false} axisLine={false} fontSize={10} />
                   <YAxis yAxisId="score" stroke="#59717a" tickLine={false} axisLine={false} fontSize={10} />
@@ -461,7 +339,7 @@ export function GridShotCareerProfile({
         <section className="career-data-panel career-performance-panel">
           <header>
             <div><Target size={16} /><h2>{tx("Grid Shot 能力档案", "Grid Shot skill profile")}</h2></div>
-            {careerProfile && <span>{careerProfile.sample.benchmarkSessions} {tx("局基准记录", "benchmark runs")} · {profileConfidenceLabel(careerProfile.sample.confidence)}</span>}
+            {careerProfile && <span>{careerProfile.sample.comparableSessions} {tx("局可比记录", "comparable sessions")} · {profileConfidenceLabel(careerProfile.sample.confidence)}</span>}
           </header>
           {careerProfile ? (
             <div className="career-ability-list">
@@ -489,32 +367,31 @@ export function GridShotCareerProfile({
 
       <section className="career-data-panel career-project-analysis">
         <header>
-          <div><BrainCircuit size={16} /><h2>{tx("综合分析", "Integrated analysis")}</h2></div>
-          <span>{careerProfile ? profileConfidenceLabel(careerProfile.sample.confidence) : tx("等待基准数据", "Awaiting benchmark data")}</span>
+          <div><BrainCircuit size={16} /><h2>{tx("系统分析", "System analysis")}</h2></div>
+          <span>{careerProfile ? profileConfidenceLabel(careerProfile.sample.confidence) : tx("等待有效数据", "Awaiting valid data")}</span>
         </header>
         <div className="career-project-analysis-body">
-          <div><small>{tx("当前结论", "CURRENT FINDING")}</small><h3>{overviewGoal.title}</h3><p>{overviewGoal.description}</p></div>
+          <div><small>{tx("当前结论", "CURRENT FINDING")}</small><h3>{systemFinding.title}</h3><p>{systemFinding.description}</p></div>
           <div><small>{tx("数据来源", "DATA SOURCE")}</small><b>{tx("Grid Shot 训练记录", "Grid Shot training sessions")}</b><p>{tx("这里专注展示你在这个训练项目中的长期表现。", "This view focuses on your long-term performance in this training project.")}</p></div>
-          <button type="button" onClick={onStartBenchmark}><Play size={15} fill="currentColor" />{overviewGoal.actionLabel}</button>
         </div>
       </section>
 
       <section className="career-data-panel career-history-panel">
         <header>
-          <div><Clock3 size={16} /><h2>{scope === "benchmark" ? tx("基准训练记录", "Benchmark history") : tx("全部 Grid Shot 记录", "All Grid Shot history")}</h2></div>
+          <div><Clock3 size={16} /><h2>{tx("全部 Grid Shot 记录", "All Grid Shot history")}</h2></div>
           <div className="career-history-actions">
             {loading && <span><LoaderCircle className="spin" size={13} />{tx("同步中", "Syncing")}</span>}
             <button type="button" onClick={onRefresh} aria-label={tx("刷新记录", "Refresh history")}><RefreshCw size={14} /></button>
           </div>
         </header>
         {loadError && <div className="career-inline-notice"><CloudOff size={14} />{loadError}</div>}
-        {scopedSessions.length ? (
+        {sessions.length ? (
           <>
             <div className="career-session-list">
               <div className="career-session-head"><span>{tx("时间", "Date")}</span><span>{tx("得分", "Score")}</span><span>{tx("准确率", "Accuracy")}</span><span>TPM</span><span>{tx("稳定性", "Stability")}</span><span>{tx("评级", "Grade")}</span><span /></div>
               {visibleSessions.map((session) => (
                 <button type="button" className="career-session-row" data-integrity={session.integrityStatus.toLowerCase()} key={session.key} onClick={() => onOpenSession(session.key)}>
-                  <span><time>{formatDate(session.completedAt)}</time><small>{isGridShotBenchmarkSession(session) ? `${tx("基准", "Benchmark")} · ` : `${tx("自由", "Practice")} · `}{Math.round(session.durationMs / 1_000)}s · {session.configurationKey.split(":").at(-1) ?? "-"} · {session.source === "cloud" ? tx("云端", "Cloud") : tx("本地", "Local")}</small></span>
+                  <span><time>{formatDate(session.completedAt)}</time><small>{Math.round(session.durationMs / 1_000)}s · {session.configurationKey.split(":").at(-1) ?? "-"} · {session.source === "cloud" ? tx("云端", "Cloud") : tx("本地", "Local")}</small></span>
                   <b>{formatNumber(session.score)}</b>
                   <span>{session.accuracy.toFixed(1)}%</span>
                   <span>{session.targetsPerMinute.toFixed(1)}</span>
@@ -524,14 +401,14 @@ export function GridShotCareerProfile({
                 </button>
               ))}
             </div>
-            {scopedSessions.length > 12 && <button type="button" className="career-show-all" onClick={() => setShowAll((value) => !value)}>{showAll ? tx("收起记录", "Show less") : `${tx("查看全部", "Show all")} ${scopedSessions.length} ${tx("局", "sessions")}`}</button>}
+            {sessions.length > 12 && <button type="button" className="career-show-all" onClick={() => setShowAll((value) => !value)}>{showAll ? tx("收起记录", "Show less") : `${tx("查看全部", "Show all")} ${sessions.length} ${tx("局", "sessions")}`}</button>}
           </>
         ) : !loading && (
           <div className="career-empty-state">
             <Crosshair size={28} />
-            <h3>{scope === "benchmark" ? tx("还没有基准训练记录", "No benchmark runs yet") : tx("还没有 Grid Shot 记录", "No Grid Shot sessions yet")}</h3>
-            <p>{scope === "benchmark" ? tx("完成一局基准训练，即可建立第一条生涯基线。", "Complete one benchmark run to start your baseline.") : tx("完成一局后，这里会自动生成生涯数据。", "Complete a session and your career data will appear here.")}</p>
-            <button type="button" onClick={scope === "benchmark" ? onStartBenchmark : onBrowseTraining}>{scope === "benchmark" ? tx("开始基准训练", "Start benchmark") : tx("选择训练", "Choose training")}</button>
+            <h3>{tx("还没有 Grid Shot 记录", "No Grid Shot sessions yet")}</h3>
+            <p>{tx("完成一局后，这里会自动生成生涯数据。", "Complete a session and your career data will appear here.")}</p>
+            <button type="button" onClick={onBrowseTraining}>{tx("选择训练", "Choose training")}</button>
           </div>
         )}
       </section>

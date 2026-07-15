@@ -9,10 +9,8 @@ import type {
   CareerSessionReviewRequest,
 } from "../../careerProjectModule";
 import { tx } from "../../../../i18n";
-import { getTrainingCoachingTask, type TrainingCoachingTask } from "../../../../game/analysis/trainingCoachingTaskService";
 import {
   cloudGridShotCareerDetail,
-  isGridShotBenchmarkSession,
   localGridShotCareerDetail,
   mergeGridShotCareerSessions,
   summarizeGridShotCareer,
@@ -34,11 +32,12 @@ import type { GridShotCareerProjectData } from "./gridShotCareerProjectData";
 export const gridShotCareerProjectDefinition: CareerProjectDefinition = {
   id: "grid-shot",
   engineId: "clicking",
+  difficulty: "foundation",
   name: ["GRID SHOT", "GRID SHOT"],
   eyebrow: ["点击定位", "CLICKING"],
   description: [
-    "建立可比较的点击定位基线，观察准确率、切换节奏与后程控制。",
-    "Build a comparable clicking baseline across accuracy, switching pace, and late-run control.",
+    "汇总有效训练记录，观察准确率、切换节奏与后程控制。",
+    "Use valid sessions to track accuracy, switching pace, and late-run control.",
   ],
   capabilities: [
     { code: "click-precision", label: ["点击精准", "Click precision"], weight: 0.35 },
@@ -83,7 +82,7 @@ function profileConfidenceLabel(confidence: TrainingCareerProfileConfidence) {
   if (confidence === "DEVELOPING") return tx("成长档案", "Developing profile");
   if (confidence === "INITIAL") return tx("初步档案", "Initial profile");
   if (confidence === "OBSERVING") return tx("数据观察中", "Collecting data");
-  return tx("等待基准记录", "Awaiting benchmark");
+  return tx("等待有效记录", "Awaiting valid sessions");
 }
 
 function confidenceWeight(confidence: TrainingCareerProfileConfidence | undefined) {
@@ -139,49 +138,52 @@ function abilities(profile: TrainingCareerProfile | null): CareerCapabilityEvide
   });
 }
 
-function overviewGoal(
-  benchmarkValidSessions: number,
-  coachingTask: TrainingCoachingTask | null,
-) {
-  const activeTask = coachingTask?.status === "ACTIVE" ? coachingTask : null;
-  if (activeTask) {
-    return {
-      eyebrow: tx("当前训练目标", "CURRENT TRAINING GOAL"),
-      title: activeTask.title,
-      description: activeTask.description,
-      completed: activeTask.progress.attemptsCompleted,
-      total: activeTask.progress.maxAttempts,
-      projectId: "grid-shot",
-      entryId: "benchmark",
-      actionLabel: tx("继续目标训练", "Continue goal"),
-    };
-  }
-  const nextMilestone = benchmarkValidSessions < 3 ? 3 : benchmarkValidSessions < 5 ? 5 : 10;
-  const remaining = Math.max(0, nextMilestone - benchmarkValidSessions);
-  const baseline = benchmarkValidSessions < 3
-    ? { completed: benchmarkValidSessions, total: 3, title: tx("建立第一份 Grid Shot 基线", "Establish your first Grid Shot baseline"), description: tx("完成三局固定配置训练，生涯才能开始判断趋势。", "Complete three fixed-configuration runs so career can begin judging trends.") }
-    : benchmarkValidSessions < 10
-      ? { completed: benchmarkValidSessions, total: nextMilestone, title: tx("把初步档案练成稳定基线", "Turn the early profile into a stable baseline"), description: tx(`再完成 ${remaining} 局基准训练，提升档案可信度。`, `Complete ${remaining} more benchmark runs to improve profile confidence.`) }
-      : { completed: 10, total: 10, title: tx("稳定基线已经建立", "Stable baseline established"), description: tx("继续训练以观察长期变化，或进入项目档案查看具体指标。", "Keep training to reveal long-term change, or open the project profile for detailed metrics.") };
+function comparableSessions(sessions: readonly GridShotCareerSession[]) {
+  const groups = new Map<string, GridShotCareerSession[]>();
+  sessions.filter((session) => session.integrityStatus === "VALID").forEach((session) => {
+    const key = `${session.configurationKey}:${session.modeVersion}:${session.scoringVersion}`;
+    const group = groups.get(key) ?? [];
+    group.push(session);
+    groups.set(key, group);
+  });
+  let selected: GridShotCareerSession[] = [];
+  groups.forEach((group) => {
+    if (group.length > selected.length) selected = group;
+  });
+  return selected;
+}
+
+function projectInsight(overview: ReturnType<typeof summarizeGridShotCareer>) {
+  if (!overview.validSessions) return {
+    eyebrow: tx("系统分析", "SYSTEM ANALYSIS"),
+    title: tx("等待有效训练数据", "Waiting for valid training data"),
+    description: tx("完成训练后，系统会从表现与阶段数据中生成当前解读。", "Complete a session to generate a readout from performance and phase data."),
+  };
+  if (overview.recentScoreDeltaPercent !== null && overview.recentScoreDeltaPercent > 2) return {
+    eyebrow: tx("系统分析", "SYSTEM ANALYSIS"),
+    title: tx("近期训练表现正在提升", "Recent performance is improving"),
+    description: tx("项目档案会继续观察准确率、命中速度与稳定度是否同步保持。", "The profile will keep checking whether accuracy, pace, and consistency hold together."),
+  };
+  if (overview.recentScoreDeltaPercent !== null && overview.recentScoreDeltaPercent < -2) return {
+    eyebrow: tx("系统分析", "SYSTEM ANALYSIS"),
+    title: tx("近期表现出现回落", "Recent performance has declined"),
+    description: tx("进入项目档案查看具体变化，建议只针对最明显的一项调整。", "Open the project profile for the specific change and adjust only the clearest issue."),
+  };
   return {
-    eyebrow: tx("当前训练目标", "CURRENT TRAINING GOAL"),
-    ...baseline,
-    projectId: "grid-shot",
-    entryId: "benchmark",
-    actionLabel: tx("开始基准训练", "Start benchmark"),
+    eyebrow: tx("系统分析", "SYSTEM ANALYSIS"),
+    title: tx("当前表现整体稳定", "Current performance is stable"),
+    description: tx("暂未发现明显变化，项目档案会继续积累同配置记录并更新判断。", "No major change is evident; the profile will keep updating from comparable sessions."),
   };
 }
 
 function contribution(dataset: CareerProjectDataset): CareerProjectContribution {
   const projectData = data(dataset);
   const sessions = projectData.sessions;
-  const benchmark = sessions.filter(isGridShotBenchmarkSession);
   const allOverview = summarizeGridShotCareer(sessions);
-  const benchmarkOverview = summarizeGridShotCareer(benchmark);
-  const goal = overviewGoal(benchmarkOverview.validSessions, projectData.coachingTask);
-  const trend = benchmarkOverview.recentScoreDeltaPercent === null
+  const cohortOverview = summarizeGridShotCareer(comparableSessions(sessions));
+  const trend = cohortOverview.recentScoreDeltaPercent === null
     ? "observing"
-    : benchmarkOverview.recentScoreDeltaPercent > 2 ? "improving" : benchmarkOverview.recentScoreDeltaPercent < -2 ? "declining" : "stable";
+    : cohortOverview.recentScoreDeltaPercent > 2 ? "improving" : cohortOverview.recentScoreDeltaPercent < -2 ? "declining" : "stable";
   return {
     project: {
       definition: gridShotCareerProjectDefinition,
@@ -189,7 +191,6 @@ function contribution(dataset: CareerProjectDataset): CareerProjectContribution 
         ? profileConfidenceLabel(projectData.profile.sample.confidence)
         : tx("数据观察中", "Collecting data"),
       sessionCount: sessions.length,
-      benchmarkCount: benchmark.length,
       summary: allOverview.validSessions
         ? tx(
           `平均准确率 ${allOverview.averageAccuracy.toFixed(1)}% · ${allOverview.averageTargetsPerMinute.toFixed(1)} TPM`,
@@ -197,16 +198,18 @@ function contribution(dataset: CareerProjectDataset): CareerProjectContribution 
         )
         : tx("等待第一局有效训练记录", "Awaiting the first valid session"),
       trend,
+      coreMetrics: allOverview.validSessions ? [
+        { code: "accuracy", label: tx("平均准确率", "Average accuracy"), value: `${allOverview.averageAccuracy.toFixed(1)}%` },
+        { code: "targetsPerMinute", label: tx("平均目标速度", "Average target pace"), value: `${allOverview.averageTargetsPerMinute.toFixed(1)} TPM` },
+        { code: "consistencyScore", label: tx("平均节奏稳定", "Average rhythm stability"), value: `${allOverview.averageConsistencyScore.toFixed(0)} / 100` },
+      ] : [],
     },
     updatedAt: sessions[0]?.completedAt ?? null,
     totalSessions: sessions.length,
     totalDurationMs: allOverview.totalDurationMs,
-    benchmarkSessions: benchmark.length,
-    practiceSessions: sessions.length - benchmark.length,
     activity: sessions.map((session) => ({
       completedAt: session.completedAt,
       durationMs: session.durationMs,
-      sessionType: session.sessionType,
     })),
     abilities: abilities(projectData.profile),
     recentSessions: sessions.slice(0, 8).map((session) => ({
@@ -217,23 +220,22 @@ function contribution(dataset: CareerProjectDataset): CareerProjectContribution 
       completedAt: session.completedAt,
       durationMs: session.durationMs,
       sessionType: session.sessionType,
-      context: `${isGridShotBenchmarkSession(session) ? tx("基准", "Benchmark") : tx("自由训练", "Practice")} · ${Math.round(session.durationMs / 1_000)}s`,
+      context: `${Math.round(session.durationMs / 1_000)}s · ${session.configurationKey.split(":").at(-1) ?? "-"}`,
       primaryValue: new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(Math.round(session.score)),
       secondaryValue: `${session.accuracy.toFixed(1)}%`,
       grade: session.grade,
     })),
-    trend: benchmarkOverview.trend.map((point) => ({
+    trend: cohortOverview.trend.map((point) => ({
       order: point.order,
       completedAt: point.completedAt,
       primary: point.scorePerMinute,
       secondary: point.accuracy,
     })),
-    goal,
-    recommendation: {
-      title: goal.title,
-      description: goal.description,
-      actionLabel: goal.actionLabel,
+    trendLabels: {
+      primary: tx("每分钟得分", "Score / min"),
+      secondary: tx("准确率", "Accuracy"),
     },
+    insight: projectInsight(cohortOverview),
   };
 }
 
@@ -241,7 +243,6 @@ function localDataset(): CareerProjectDataset {
   const projectData: GridShotCareerProjectData = {
     sessions: [],
     profile: null,
-    coachingTask: null,
     notice: null,
   };
   return { sessions: projectData.sessions, payload: projectData, notice: null };
@@ -250,10 +251,9 @@ function localDataset(): CareerProjectDataset {
 async function remoteDataset(local: CareerProjectDataset, context: CareerProjectLoadContext) {
   if (!context.authenticated) return local;
   const localData = data(local);
-  const [cloudResult, profileResult, coachingResult] = await Promise.allSettled([
+  const [cloudResult, profileResult] = await Promise.allSettled([
     listAllTrainingSessions("grid-shot"),
     getTrainingCareerProfile("grid-shot"),
-    context.isAdmin ? getTrainingCoachingTask("grid-shot") : Promise.resolve(null),
   ]);
   const notice = cloudResult.status === "rejected"
     ? tx("云端记录暂时无法读取，请稍后重试。", "Cloud history is unavailable. Please try again later.")
@@ -263,7 +263,6 @@ async function remoteDataset(local: CareerProjectDataset, context: CareerProject
       ? mergeGridShotCareerSessions(cloudResult.value, [])
       : localData.sessions,
     profile: profileResult.status === "fulfilled" ? profileResult.value : null,
-    coachingTask: coachingResult.status === "fulfilled" ? coachingResult.value : null,
     notice,
   };
   return { sessions: projectData.sessions, payload: projectData, notice };
@@ -284,11 +283,9 @@ export const gridShotCareerModule: CareerProjectModule = {
       data={data(props.dataset)}
       loading={props.loading}
       authenticated={props.authenticated}
-      isAdmin={props.isAdmin}
       onBack={props.onBack}
       onRefresh={props.onRefresh}
       onOpenSession={props.onOpenSession}
-      onStartTraining={props.onStartTraining}
       onBrowseTraining={props.onBrowseTraining}
     />
   ),

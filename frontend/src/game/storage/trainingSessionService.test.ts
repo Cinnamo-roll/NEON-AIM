@@ -41,10 +41,10 @@ function record() {
       comboBefore: 0,
       comboAfter: 1,
       baseScore: 100,
-      speedBonus: 30,
+      speedBonus: 0,
       comboBonus: 0,
       stabilityBonus: 0,
-      totalScore: 130,
+      totalScore: 100,
     },
     {
       id: "event-2",

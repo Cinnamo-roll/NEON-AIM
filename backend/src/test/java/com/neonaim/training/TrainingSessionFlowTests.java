@@ -64,13 +64,14 @@ class TrainingSessionFlowTests {
 				.andExpect(header().string("Location", org.hamcrest.Matchers.containsString("/api/training/sessions/")))
 				.andExpect(jsonPath("$.data.summary.trainingId").value("grid-shot"))
 				.andExpect(jsonPath("$.data.summary.sessionType").value("benchmark"))
-				.andExpect(jsonPath("$.data.summary.score").value(260.0))
+				.andExpect(jsonPath("$.data.summary.score").value(200.0))
 				.andExpect(jsonPath("$.data.detail.segments.length()").value(12))
 				.andExpect(jsonPath("$.data.detail.events.length()").value(3))
 				.andExpect(jsonPath("$.data.analysis.status").value("READY"))
 				.andExpect(jsonPath("$.data.analysis.source").value("RULES"))
-				.andExpect(jsonPath("$.data.analysis.engineVersion").value("grid-shot-rules-v1"))
-				.andExpect(jsonPath("$.data.analysis.findings[0].code").value("ACCURACY_LIMITS_PACE"))
+				.andExpect(jsonPath("$.data.analysis.engineVersion").value("grid-shot-rules-v3"))
+				.andExpect(jsonPath("$.data.analysis.findings[0].code").value("BEST_PHASE_CONTROL"))
+				.andExpect(jsonPath("$.data.analysis.findings[1].code").value("ACCURACY_LIMITS_PACE"))
 				.andExpect(jsonPath("$.data.analysis.nextAction.targets[0].metric").value("accuracy"))
 				.andExpect(jsonPath("$.data.analysis.usage.inputTokens").value(0))
 				.andReturn();
@@ -88,17 +89,17 @@ class TrainingSessionFlowTests {
 		mockMvc.perform(get("/api/training/career/grid-shot/ai-analysis")
 					.header("Authorization", "Bearer " + token))
 				.andExpect(status().isConflict())
-				.andExpect(jsonPath("$.code").value("CAREER_BENCHMARK_SAMPLE_TOO_SMALL"));
+				.andExpect(jsonPath("$.code").value("CAREER_COMPARABLE_SAMPLE_TOO_SMALL"));
 		mockMvc.perform(get("/api/training/career/grid-shot/coaching-task")
 					.header("Authorization", "Bearer " + token))
 				.andExpect(status().isForbidden());
 		mockMvc.perform(get("/api/training/career/grid-shot/profile")
 					.header("Authorization", "Bearer " + token))
 				.andExpect(status().isOk())
-				.andExpect(jsonPath("$.data.profileVersion").value("grid-shot-career-profile-v1"))
-				.andExpect(jsonPath("$.data.benchmark.configurationKey").value("grid-shot:60s:medium"))
-				.andExpect(jsonPath("$.data.sample.benchmarkSessions").value(1))
-				.andExpect(jsonPath("$.data.sample.freePracticeSessions").value(0))
+				.andExpect(jsonPath("$.data.profileVersion").value("grid-shot-career-profile-v2"))
+				.andExpect(jsonPath("$.data.cohort.configurationKey").value("grid-shot:60s:medium"))
+				.andExpect(jsonPath("$.data.sample.comparableSessions").value(1))
+				.andExpect(jsonPath("$.data.sample.configurationCount").value(1))
 				.andExpect(jsonPath("$.data.sample.confidence").value("OBSERVING"))
 				.andExpect(jsonPath("$.data.coverage.availableDimensions").value(4))
 				.andExpect(jsonPath("$.data.dimensions.length()").value(4))
@@ -155,7 +156,7 @@ class TrainingSessionFlowTests {
 					.header("Authorization", "Bearer " + token))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.data.source").value("RULES"))
-				.andExpect(jsonPath("$.data.nextAction.targets.length()").value(2));
+				.andExpect(jsonPath("$.data.nextAction.targets.length()").value(1));
 	}
 
 	@Test
@@ -198,6 +199,50 @@ class TrainingSessionFlowTests {
 				.andExpect(jsonPath("$.data.totalElements").value(0));
 	}
 
+	@Test
+	void derivedIntervalAndGradeCannotDisagreeWithRawEvents() throws Exception {
+		String token = registerAndToken("derived_guard", "derived-guard@example.com");
+		String tampered = payload("derived-guard-session", 2)
+				.replace("\"averageHitInterval\":1000", "\"averageHitInterval\":900")
+				.replace("\"grade\":\"D\"", "\"grade\":\"C\"");
+
+		mockMvc.perform(post("/api/training/sessions")
+					.header("Authorization", "Bearer " + token)
+					.contentType(MediaType.APPLICATION_JSON)
+					.content(tampered))
+				.andExpect(status().isBadRequest());
+	}
+
+	@Test
+	void falseProjectSignalCannotReachAiAnalysis() throws Exception {
+		String token = registerAndToken("signal_guard", "signal-guard@example.com");
+		String tampered = payload("signal-guard-session", 2).replace("\"signals\":[]", """
+				"signals":[{"code":"PACE_OPPORTUNITY","severity":"opportunity","evidence":{"accuracy":66.7,"averageHitInterval":1000,"medianHitInterval":1000}}]
+				""".strip());
+
+		mockMvc.perform(post("/api/training/sessions")
+					.header("Authorization", "Bearer " + token)
+					.contentType(MediaType.APPLICATION_JSON)
+					.content(tampered))
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.code").value("TRAINING_ANALYSIS_INVALID"));
+	}
+
+	@Test
+	void componentConsistentButRuleInvalidScoreIsRejected() throws Exception {
+		String token = registerAndToken("score_guard", "score-guard@example.com");
+		String tampered = payload("score-guard-session", 2).replace(
+				"\"baseScore\":100,\"speedBonus\":0,\"comboBonus\":0,\"stabilityBonus\":0,\"totalScore\":100",
+				"\"baseScore\":100,\"speedBonus\":50,\"comboBonus\":0,\"stabilityBonus\":0,\"totalScore\":150");
+
+		mockMvc.perform(post("/api/training/sessions")
+					.header("Authorization", "Bearer " + token)
+					.contentType(MediaType.APPLICATION_JSON)
+					.content(tampered))
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.code").value("TRAINING_EVENT_INVALID"));
+	}
+
 	private String registerAndToken(String username, String email) throws Exception {
 		MvcResult registration = mockMvc.perform(post("/api/auth/register")
 					.contentType(MediaType.APPLICATION_JSON)
@@ -225,10 +270,15 @@ class TrainingSessionFlowTests {
 				.mapToObj(index -> {
 					int hits = index == 0 ? 2 : 0;
 					int misses = index == 1 ? 1 : 0;
-					int score = index == 0 ? 260 : 0;
+					int score = index == 0 ? 200 : 0;
+					double accuracy = index == 0 ? 100 : 0;
+					double tpm = index == 0 ? 24 : 0;
+					double interval = index == 0 ? 1000 : 0;
+					int maxCombo = index == 0 ? 2 : 0;
 					return """
-							{"index":%d,"startMs":%d,"endMs":%d,"hits":%d,"misses":%d,"accuracy":0,"targetsPerMinute":0,"averageHitInterval":0,"consistencyScore":0,"score":%d,"maxCombo":2}
-							""".formatted(index, index * 5_000, (index + 1) * 5_000, hits, misses, score).strip();
+							{"index":%d,"startMs":%d,"endMs":%d,"hits":%d,"misses":%d,"accuracy":%.1f,"targetsPerMinute":%.1f,"averageHitInterval":%.1f,"consistencyScore":0,"score":%d,"maxCombo":%d}
+							""".formatted(index, index * 5_000, (index + 1) * 5_000, hits, misses,
+							accuracy, tpm, interval, score, maxCombo).strip();
 				})
 				.collect(Collectors.joining(","));
 		return """
@@ -243,13 +293,13 @@ class TrainingSessionFlowTests {
 				  "completedAt":"2026-07-14T04:01:00Z",
 				  "durationMs":60000,
 				  "configuration":{"duration":60,"targetSize":"medium","activeTargetCount":3},
-				  "summary":{"score":260,"hits":%d,"misses":1,"accuracy":66.7,"targetsPerMinute":2,"averageHitInterval":1000,"consistencyScore":0,"maxCombo":2,"grade":"D"},
+				  "summary":{"score":200,"hits":%d,"misses":1,"accuracy":66.7,"targetsPerMinute":2,"averageHitInterval":1000,"consistencyScore":0,"maxCombo":2,"grade":"D"},
 				  "detail":{"segments":[%s],"events":[
-				    {"id":"e1","sessionId":"%s","timestamp":1000,"elapsedMs":1000,"type":"hit","comboBefore":0,"comboAfter":1,"baseScore":100,"speedBonus":30,"comboBonus":0,"stabilityBonus":0,"totalScore":130},
-				    {"id":"e2","sessionId":"%s","timestamp":2000,"elapsedMs":2000,"type":"hit","comboBefore":1,"comboAfter":2,"baseScore":100,"speedBonus":30,"comboBonus":0,"stabilityBonus":0,"totalScore":130},
+				    {"id":"e1","sessionId":"%s","timestamp":1000,"elapsedMs":1000,"type":"hit","comboBefore":0,"comboAfter":1,"baseScore":100,"speedBonus":0,"comboBonus":0,"stabilityBonus":0,"totalScore":100},
+				    {"id":"e2","sessionId":"%s","timestamp":2000,"elapsedMs":2000,"type":"hit","comboBefore":1,"comboAfter":2,"baseScore":100,"speedBonus":0,"comboBonus":0,"stabilityBonus":0,"totalScore":100},
 				    {"id":"e3","sessionId":"%s","timestamp":6000,"elapsedMs":6000,"type":"miss","comboBefore":2,"comboAfter":0,"baseScore":0,"speedBonus":0,"comboBonus":0,"stabilityBonus":0,"totalScore":0}
 				  ]},
-				  "analysisSnapshot":{"schemaVersion":1,"scope":"session","training":{"id":"grid-shot","modeVersion":1,"scoringVersion":1,"configurationKey":"grid-shot:60s:medium"},"source":{"sessionId":"%s","completedAt":"2026-07-14T04:01:00Z"},"summary":{"score":260,"hits":%d,"misses":1,"accuracy":66.7,"targetsPerMinute":2,"averageHitInterval":1000,"consistencyScore":0,"maxCombo":2,"grade":"D"},"windows":[{"label":"phase1"},{"label":"phase2"},{"label":"phase3"}],"signals":[],"integrity":{"passed":true,"errors":[]}},
+				  "analysisSnapshot":{"schemaVersion":1,"scope":"session","training":{"id":"grid-shot","modeVersion":1,"scoringVersion":1,"configurationKey":"grid-shot:60s:medium"},"source":{"sessionId":"%s","completedAt":"2026-07-14T04:01:00Z"},"summary":{"score":200,"hits":%d,"misses":1,"accuracy":66.7,"targetsPerMinute":2,"averageHitInterval":1000,"medianHitInterval":1000,"fastestHitInterval":1000,"slowestHitInterval":1000,"averageTargetLifetime":0,"consistencyScore":0,"maxCombo":2,"grade":"D"},"windows":[{"label":"phase1","startMs":0,"endMs":20000,"hits":2,"misses":1,"accuracy":66.7,"targetsPerMinute":6,"averageHitInterval":1000,"medianHitInterval":1000,"averageTargetLifetime":0,"consistencyScore":0,"maxCombo":2,"score":200},{"label":"phase2","startMs":20000,"endMs":40000,"hits":0,"misses":0,"accuracy":0,"targetsPerMinute":0,"averageHitInterval":0,"medianHitInterval":0,"averageTargetLifetime":0,"consistencyScore":0,"maxCombo":0,"score":0},{"label":"phase3","startMs":40000,"endMs":60000,"hits":0,"misses":0,"accuracy":0,"targetsPerMinute":0,"averageHitInterval":0,"medianHitInterval":0,"averageTargetLifetime":0,"consistencyScore":0,"maxCombo":0,"score":0}],"signals":[],"integrity":{"passed":true,"errors":[]}},
 				  "integrity":{"passed":true,"errors":[]}
 				}
 				""".formatted(clientSessionId, summaryHits, segments, clientSessionId, clientSessionId,

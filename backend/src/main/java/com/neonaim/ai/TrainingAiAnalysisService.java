@@ -61,7 +61,7 @@ class TrainingAiAnalysisService {
 				.findFirstByUserIdAndSessionIdAndStatusOrderByCreatedAtDesc(
 						userId, sessionId, TrainingAiAnalysisCall.Status.PENDING)
 				.orElse(null);
-		if (pending != null && !isStale(pending)) {
+		if (pending != null && isCurrent(pending, prompt, context.snapshot()) && !isStale(pending)) {
 			return view(pending, context.currentAnalysis(), context.snapshot());
 		}
 		if (pending != null) {
@@ -88,11 +88,12 @@ class TrainingAiAnalysisService {
 	JobView latest(UUID userId, UUID sessionId) {
 		TrainingSessionAnalysisOperations.AnalysisContext context =
 				trainingOperations.loadAnalysisContext(userId, sessionId);
-		strategyRegistry.require(context.snapshot().trainingId());
+		TrainingAiAnalysisStrategy strategy = strategyRegistry.require(context.snapshot().trainingId());
+		TrainingAiAnalysisStrategy.PromptSpec prompt = strategy.prompt(context.snapshot().scope());
 		TrainingAiAnalysisCall latest = callRepository
 				.findFirstByUserIdAndSessionIdOrderByCreatedAtDesc(userId, sessionId)
 				.orElse(null);
-		if (latest == null) {
+		if (latest == null || !isCurrent(latest, prompt, context.snapshot())) {
 			return JobView.notRequested(context.currentAnalysis(), context.snapshot());
 		}
 		if (latest.status() == TrainingAiAnalysisCall.Status.PENDING && isStale(latest)) {
@@ -167,6 +168,13 @@ class TrainingAiAnalysisService {
 
 	private boolean isStale(TrainingAiAnalysisCall call) {
 		return call.createdAt().plus(STALE_PENDING_AFTER).isBefore(clock.instant());
+	}
+
+	private static boolean isCurrent(TrainingAiAnalysisCall call,
+			TrainingAiAnalysisStrategy.PromptSpec prompt,
+			com.neonaim.training.api.TrainingAnalysisSnapshot snapshot) {
+		return prompt.promptVersion().equals(call.promptVersion())
+				&& snapshot.dataVersion().equals(call.dataVersion());
 	}
 
 	private static String safeMessage(ModelProviderException exception) {

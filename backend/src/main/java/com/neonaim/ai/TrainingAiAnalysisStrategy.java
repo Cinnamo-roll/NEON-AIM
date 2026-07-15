@@ -2,6 +2,7 @@ package com.neonaim.ai;
 
 import com.neonaim.training.api.TrainingAnalysisSnapshot;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 
 public interface TrainingAiAnalysisStrategy {
@@ -11,6 +12,15 @@ public interface TrainingAiAnalysisStrategy {
 	PromptSpec prompt(TrainingAnalysisSnapshot.Scope scope);
 
 	void validateTarget(TrainingAnalysisProvider.Target target);
+
+	default void validateTarget(TrainingAnalysisSnapshot snapshot, TrainingAnalysisProvider.Target target) {
+		validateTarget(target);
+	}
+
+	default Optional<TrainingAnalysisProvider.AnalysisResult> recoverRejectedResult(
+			TrainingAnalysisSnapshot snapshot, TrainingAnalysisProvider.AnalysisResult result) {
+		return Optional.empty();
+	}
 
 	record PromptSpec(String promptVersion, String engineVersion, String instructions,
 			Set<String> supportedTargetMetrics) {
