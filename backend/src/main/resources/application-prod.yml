@@ -10,6 +10,9 @@ spring:
       password: ${REDIS_PASSWORD:}
   cache:
     type: redis
+    redis:
+      time-to-live: 10m
+      cache-null-values: false
 
 app:
   cors:

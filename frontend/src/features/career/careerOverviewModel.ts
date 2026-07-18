@@ -38,7 +38,9 @@ export interface CareerOverviewSession {
   durationMs: number;
   sessionType: "benchmark" | "practice";
   context: string;
+  primaryLabel: string;
   primaryValue: string;
+  secondaryLabel: string;
   secondaryValue: string;
   grade: string;
 }

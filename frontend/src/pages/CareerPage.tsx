@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  AlertTriangle,
   ArrowLeft,
   ArrowRight,
   Clock3,
@@ -13,6 +12,7 @@ import {
 import { useAuthStore } from "../features/auth/authStore";
 import { CareerGamePlan } from "../features/career/CareerGamePlan";
 import { CareerOverview } from "../features/career/CareerOverview";
+import { CareerDataStatus } from "../features/career/CareerDataStatus";
 import { aggregateCareerOverview } from "../features/career/careerOverviewAggregation";
 import {
   CareerPageCarousel,
@@ -20,10 +20,16 @@ import {
   type CareerPrimaryView,
 } from "../features/career/CareerPageCarousel";
 import {
+  careerActiveProjectStorageKey,
   careerPrimaryViewStorageKey,
+  readCareerActiveProject,
   readCareerPrimaryView,
 } from "../features/career/careerPrimaryViewStorage";
 import { CareerProjectDirectory } from "../features/career/CareerProjectDirectory";
+import {
+  readCareerProjectDatasetCache,
+  writeCareerProjectDatasetCache,
+} from "../features/career/careerProjectDatasetCache";
 import type {
   CareerProjectDataset,
   CareerProjectLoadContext,
@@ -35,7 +41,7 @@ import {
 } from "../features/career/careerProjectRegistry";
 import { listPendingGuestTrainingSessions } from "../game/storage/pendingGuestTrainingSessions";
 import type { TrainingSessionSubmission } from "../game/storage/trainingSessionService";
-import { tx } from "../i18n";
+import { formatSeconds, getAppLanguage, tx } from "../i18n";
 import "./careerPage.css";
 
 interface CareerPageProps {
@@ -48,23 +54,34 @@ interface CareerPageProps {
 interface SelectedSession {
   projectId: string;
   sessionKey: string;
+  origin: "overview" | "project";
 }
 
 const CAREER_GUEST_DATA_ROWS = [
-  ["SESSION STREAM", "TRAINING RECORD", "PROJECT PROFILE", "CAPABILITY EVIDENCE"],
-  ["ACCURACY", "SPEED", "STABILITY", "CONTROL"],
-  ["AI ANALYSIS", "TREND SIGNAL", "NEXT FOCUS", "CONFIDENCE"],
-  ["GAME GOAL", "TRAINING PLAN", "REVIEW LOOP", "PROGRESS"],
+  [["训练记录流", "SESSION STREAM"], ["训练记录", "TRAINING RECORD"], ["项目档案", "PROJECT PROFILE"], ["能力数据", "CAPABILITY DATA"]],
+  [["准确率", "ACCURACY"], ["速度", "SPEED"], ["稳定性", "STABILITY"], ["控制", "CONTROL"]],
+  [["AI 分析", "AI ANALYSIS"], ["趋势数据", "TREND DATA"], ["训练重点", "TRAINING FOCUS"], ["可信度", "CONFIDENCE"]],
+  [["游戏目标", "GAME GOAL"], ["训练计划", "TRAINING PLAN"], ["复盘记录", "SESSION REVIEW"], ["训练进度", "PROGRESS"]],
 ] as const;
 
-function ProjectUnavailable({ onBack }: { onBack: () => void }) {
+function ProjectUnavailable({
+  onBack,
+  backLabel = ["返回训练项目", "Back to projects"],
+}: {
+  onBack: () => void;
+  backLabel?: readonly [zh: string, en: string];
+}) {
   return (
     <main className="workspace-main career-page career-detail-page">
       <header className="career-detail-header">
-        <button type="button" onClick={onBack}><ArrowLeft size={16} />{tx("返回训练项目", "Back to projects")}</button>
-        <div><span>{tx("项目不可用", "PROJECT UNAVAILABLE")}</span><h1>{tx("无法打开这份训练档案", "This training profile cannot be opened")}</h1></div>
+        <button type="button" onClick={onBack}><ArrowLeft size={16} />{tx(...backLabel)}</button>
+        <div><h1>{tx("无法打开这份训练档案", "This training profile cannot be opened")}</h1></div>
       </header>
-      <div className="career-error"><AlertTriangle size={18} /><span>{tx("该项目没有注册生涯模块，或当前记录已经不可用。", "The project has no registered career module, or this session is no longer available.")}</span></div>
+      <CareerDataStatus
+        tone="error"
+        title={tx("无法读取这份训练档案", "This training profile is unavailable")}
+        message={tx("该项目没有注册生涯模块，或当前记录已经被删除。请返回后选择其他记录。", "The project has no registered Career module, or the session was deleted. Go back and choose another session.")}
+      />
     </main>
   );
 }
@@ -89,14 +106,13 @@ export function CareerGuestIntro({ onLogin }: { onLogin: () => void }) {
       <section className="career-guest-landing">
         <div className="career-guest-data-streams" aria-hidden="true">
           {CAREER_GUEST_DATA_ROWS.map((row, rowIndex) => (
-            <span key={row[0]} data-direction={rowIndex % 2 ? "reverse" : "forward"}>
-              {[...row, ...row, ...row].map((cell, cellIndex) => <i key={`${cell}-${cellIndex}`}>{cell}</i>)}
+            <span key={row[0][0]} data-direction={rowIndex % 2 ? "reverse" : "forward"}>
+              {[...row, ...row, ...row].map((cell, cellIndex) => <i key={`${cell[0]}-${cellIndex}`}>{tx(cell[0], cell[1])}</i>)}
             </span>
           ))}
         </div>
         <div className="career-guest-layout">
           <div className="career-guest-center">
-            <span><i />CAREER INTELLIGENCE<i /></span>
             <h1 aria-label={tx("不只记录成绩，更告诉你下一步练什么", "More than scores. Know what to train next.")}>
               <span aria-hidden="true">{tx("不只记录成绩", "More than scores")}</span>
               <span aria-hidden="true">{tx("更告诉你下一步练什么", "Know what to train next")}</span>
@@ -121,13 +137,13 @@ export function CareerGuestIntro({ onLogin }: { onLogin: () => void }) {
               {localSessions.length > 0 ? localSessions.map((session) => (
                 <article key={session.clientSessionId}>
                   <header>
-                    <span><b>{guestProjectName(session)}</b><small>{session.sessionType === "benchmark" ? tx("基准训练", "Benchmark") : tx("自定义训练", "Custom")}</small></span>
+                    <span><b>{guestProjectName(session)}</b><small>{session.sessionType === "benchmark" ? tx("标准训练", "Standard training") : tx("自由练习", "Free practice")}</small></span>
                     <time dateTime={session.completedAt}><Clock3 size={12} />{formatGuestSessionTime(session.completedAt)}</time>
                   </header>
                   <div>
                     <strong>{Math.round(session.summary.score).toLocaleString()}</strong>
                     <span><small>{tx("准确率", "Accuracy")}</small><b>{session.summary.accuracy.toFixed(1)}%</b></span>
-                    <span><small>{tx("时长", "Duration")}</small><b>{Math.round(session.durationMs / 1_000)}s</b></span>
+                    <span><small>{tx("时长", "Duration")}</small><b>{formatSeconds(Math.round(session.durationMs / 1_000))}</b></span>
                     <em data-grade={session.summary.grade}>{session.summary.grade}</em>
                   </div>
                 </article>
@@ -161,8 +177,10 @@ export function CareerPage({
   onLogin,
 }: CareerPageProps) {
   const authStatus = useAuthStore((state) => state.status);
+  const initializeAuth = useAuthStore((state) => state.initialize);
   const userId = useAuthStore((state) => state.user?.id);
   const isAdmin = useAuthStore((state) => state.user?.role === "ADMIN");
+  const language = getAppLanguage();
   const modules = useMemo(() => listCareerProjectModules(), []);
   const loadContext = useCallback((projectId: string): CareerProjectLoadContext => ({
     authenticated: authStatus === "authenticated",
@@ -170,18 +188,30 @@ export function CareerPage({
     settings: projectSettings[projectId],
   }), [authStatus, isAdmin, projectSettings]);
   const [datasets, setDatasets] = useState<Record<string, CareerProjectDataset>>(() => Object.fromEntries(
-    modules.map((module) => [module.definition.id, module.loadLocal(loadContext(module.definition.id))]),
+    modules.map((module) => {
+      const projectId = module.definition.id;
+      const context = loadContext(projectId);
+      const cached = context.authenticated
+        ? readCareerProjectDatasetCache(userId, projectId)
+        : null;
+      return [projectId, cached ?? module.loadLocal(context)];
+    }),
   ));
   const [loadingProjects, setLoadingProjects] = useState<Record<string, boolean>>({});
   const [refreshKey, setRefreshKey] = useState(0);
   const [primaryView, setPrimaryView] = useState<CareerPrimaryView>(() => readCareerPrimaryView(userId));
   const primaryViewUserId = useRef(userId);
   const [pageDirection, setPageDirection] = useState<CareerPageDirection>("next");
-  const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
+  const [activeProjectId, setActiveProjectId] = useState<string | null>(() => {
+    const storedProjectId = readCareerActiveProject(userId);
+    return storedProjectId && getCareerProjectModule(storedProjectId) ? storedProjectId : null;
+  });
   const [selectedSession, setSelectedSession] = useState<SelectedSession | null>(null);
   const [sessionDetail, setSessionDetail] = useState<unknown | null>(null);
   const [sessionLoading, setSessionLoading] = useState(false);
   const [sessionError, setSessionError] = useState<string | null>(null);
+  const [sessionCanRetry, setSessionCanRetry] = useState(false);
+  const [sessionRefreshKey, setSessionRefreshKey] = useState(0);
 
   useEffect(() => {
     if (!userId) {
@@ -192,32 +222,57 @@ export function CareerPage({
       primaryViewUserId.current = userId;
       setPrimaryView(readCareerPrimaryView(userId));
       setPageDirection("next");
-      setActiveProjectId(null);
+      const storedProjectId = readCareerActiveProject(userId);
+      setActiveProjectId(storedProjectId && getCareerProjectModule(storedProjectId) ? storedProjectId : null);
       setSelectedSession(null);
       return;
     }
     window.sessionStorage.setItem(careerPrimaryViewStorageKey(userId), primaryView);
-  }, [primaryView, userId]);
+    if (activeProjectId && getCareerProjectModule(activeProjectId)) {
+      window.sessionStorage.setItem(careerActiveProjectStorageKey(userId), activeProjectId);
+    } else {
+      window.sessionStorage.removeItem(careerActiveProjectStorageKey(userId));
+    }
+  }, [activeProjectId, primaryView, userId]);
 
   useEffect(() => {
     let active = true;
-    const locals = Object.fromEntries(
-      modules.map((module) => [module.definition.id, module.loadLocal(loadContext(module.definition.id))]),
+    const contexts = Object.fromEntries(
+      modules.map((module) => [module.definition.id, loadContext(module.definition.id)]),
     );
-    setDatasets(locals);
-    setLoadingProjects(Object.fromEntries(modules.map((module) => [module.definition.id, true])));
+    const seeds = Object.fromEntries(modules.map((module) => {
+      const projectId = module.definition.id;
+      const context = contexts[projectId];
+      const cached = context.authenticated
+        ? readCareerProjectDatasetCache(userId, projectId)
+        : null;
+      return [projectId, cached ?? module.loadLocal(context)];
+    }));
+    setDatasets(seeds);
+    setLoadingProjects(Object.fromEntries(
+      modules.map((module) => [module.definition.id, contexts[module.definition.id].authenticated]),
+    ));
     modules.forEach((module) => {
       const projectId = module.definition.id;
-      void module.loadRemote(locals[projectId], loadContext(projectId)).then((dataset) => {
+      const context = contexts[projectId];
+      if (!context.authenticated) return;
+      void module.loadRemote(seeds[projectId], context).then((dataset) => {
+        writeCareerProjectDatasetCache(userId, projectId, dataset);
         if (!active) return;
         setDatasets((current) => ({ ...current, [projectId]: dataset }));
-      }).catch(() => {
+      }).catch((error: unknown) => {
         if (!active) return;
+        const reason = error instanceof Error && error.message.trim()
+          ? tx(`服务返回：${error.message}`, `Service response: ${error.message}`)
+          : tx("未收到可识别的服务响应", "No usable response was received from the service");
         setDatasets((current) => ({
           ...current,
           [projectId]: {
-            ...locals[projectId],
-            notice: tx("项目数据暂时无法刷新，请稍后重试。", "Project data could not be refreshed. Please try again later."),
+            ...seeds[projectId],
+            notice: tx(
+              `项目数据加载失败。${reason}。当前显示已保存的数据，请检查网络连接与后端服务后重试。`,
+              `Project data failed to load. ${reason}. Saved data is shown instead. Check the network and backend service, then try again.`,
+            ),
           },
         }));
       }).finally(() => {
@@ -226,18 +281,27 @@ export function CareerPage({
       });
     });
     return () => { active = false; };
-  }, [loadContext, refreshKey, modules]);
+  }, [loadContext, refreshKey, modules, userId]);
 
-  const contributions = useMemo(() => modules.flatMap((module) => {
-    const dataset = datasets[module.definition.id];
-    return dataset ? [module.buildContribution(dataset)] : [];
-  }), [datasets, modules]);
+  const contributions = useMemo(() => {
+    void language; // Contribution models contain localized display copy.
+    return modules.flatMap((module) => {
+      const dataset = datasets[module.definition.id];
+      return dataset ? [module.buildContribution(dataset)] : [];
+    });
+  }, [datasets, language, modules]);
   const overviewModel = useMemo(() => aggregateCareerOverview(contributions), [contributions]);
   const loading = Object.values(loadingProjects).some(Boolean);
-  const notice = Object.values(datasets).map((dataset) => dataset.notice).find(Boolean) ?? null;
+  const notice = [...new Set(Object.values(datasets).map((dataset) => dataset.notice).filter((value): value is string => Boolean(value)))].join(" ") || null;
 
   const activeModule = activeProjectId ? getCareerProjectModule(activeProjectId) : undefined;
   const activeDataset = activeProjectId ? datasets[activeProjectId] : undefined;
+
+  const refreshActiveProject = (projectId: string) => {
+    setPrimaryView("projects");
+    setActiveProjectId(projectId);
+    setRefreshKey((value) => value + 1);
+  };
   const selectedModule = selectedSession ? getCareerProjectModule(selectedSession.projectId) : undefined;
   const selectedDataset = selectedSession ? datasets[selectedSession.projectId] : undefined;
   const selectedRecord: CareerProjectSession | undefined = selectedSession && selectedDataset
@@ -249,6 +313,7 @@ export function CareerPage({
     if (!selectedSession || !selectedModule || !selectedDataset || !selectedRecord) {
       setSessionDetail(null);
       setSessionLoading(false);
+      setSessionCanRetry(false);
       setSessionError(selectedSession ? tx("这条训练记录已不可用。", "This training session is no longer available.") : null);
       return () => { active = false; };
     }
@@ -258,6 +323,7 @@ export function CareerPage({
       projectSettings[selectedSession.projectId],
     );
     setSessionDetail(request.initialDetail);
+    setSessionCanRetry(Boolean(request.remoteDetail));
     setSessionError(request.initialDetail || request.remoteDetail ? null : request.missingDetailMessage);
     if (!request.remoteDetail) {
       setSessionLoading(false);
@@ -269,15 +335,43 @@ export function CareerPage({
       setSessionDetail(detail);
       setSessionError(null);
     }).catch(() => {
-      if (!active || request.initialDetail) return;
-      setSessionError(request.remoteErrorMessage);
+      if (!active) return;
+      setSessionError(request.initialDetail
+        ? `${request.remoteErrorMessage} ${tx("当前显示本地保存的分析，内容可能不是最新。", "The saved local analysis is shown and may not be current.")}`
+        : request.remoteErrorMessage);
     }).finally(() => {
       if (active) setSessionLoading(false);
     });
     return () => { active = false; };
-  }, [projectSettings, selectedDataset, selectedModule, selectedRecord, selectedSession]);
+  }, [projectSettings, selectedDataset, selectedModule, selectedRecord, selectedSession, sessionRefreshKey]);
 
-  if (authStatus !== "authenticated") {
+  if (authStatus === "loading") {
+    return (
+      <main className="workspace-main career-page career-access-status">
+        <CareerDataStatus
+          tone="loading"
+          title={tx("正在确认登录状态", "Checking your sign-in status")}
+          message={tx("身份确认完成后会自动打开生涯数据，请稍候。", "Career data will open automatically after your account is verified.")}
+        />
+      </main>
+    );
+  }
+
+  if (authStatus === "offline") {
+    return (
+      <main className="workspace-main career-page career-access-status">
+        <CareerDataStatus
+          tone="error"
+          title={tx("无法连接生涯服务", "Unable to reach the Career service")}
+          message={tx("身份服务当前不可用。请检查网络连接并确认后端已经启动，然后重试。", "The identity service is unavailable. Check the network and make sure the backend is running, then try again.")}
+          actionLabel={tx("重新连接", "Reconnect")}
+          onAction={() => { void initializeAuth(); }}
+        />
+      </main>
+    );
+  }
+
+  if (authStatus === "guest") {
     return <CareerGuestIntro onLogin={onLogin} />;
   }
 
@@ -296,23 +390,47 @@ export function CareerPage({
     window.scrollTo({ top: 0, left: 0, behavior: "auto" });
   };
 
-  const openSession = (projectId: string, sessionKey: string) => {
-    setPrimaryView("projects");
-    setActiveProjectId(projectId);
-    setSelectedSession({ projectId, sessionKey });
+  const openSession = (projectId: string, sessionKey: string, origin: SelectedSession["origin"]) => {
+    if (origin === "overview") {
+      setPrimaryView("overview");
+      setActiveProjectId(null);
+    } else {
+      setPrimaryView("projects");
+      setActiveProjectId(projectId);
+    }
+    setSelectedSession({ projectId, sessionKey, origin });
+    window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+  };
+
+  const closeSession = () => {
+    if (selectedSession?.origin === "overview") {
+      setPrimaryView("overview");
+      setActiveProjectId(null);
+    } else if (selectedSession) {
+      setPrimaryView("projects");
+      setActiveProjectId(selectedSession.projectId);
+    }
+    setSelectedSession(null);
     window.scrollTo({ top: 0, left: 0, behavior: "auto" });
   };
 
   if (selectedSession) {
     if (!selectedModule || !selectedRecord) {
-      return <ProjectUnavailable onBack={() => setSelectedSession(null)} />;
+      return <ProjectUnavailable
+        onBack={closeSession}
+        backLabel={selectedSession.origin === "overview" ? ["返回", "Back"] : undefined}
+      />;
     }
     return selectedModule.renderSessionReview({
       session: selectedRecord,
       detail: sessionDetail,
       loading: sessionLoading,
       error: sessionError,
-      onBack: () => setSelectedSession(null),
+      backLabel: selectedSession.origin === "overview"
+        ? ["返回", "Back"]
+        : ["返回 GRID SHOT 档案", "Back to Grid Shot profile"],
+      onBack: closeSession,
+      onRetry: sessionCanRetry ? () => setSessionRefreshKey((value) => value + 1) : undefined,
     });
   }
 
@@ -332,7 +450,8 @@ export function CareerPage({
           loading={loading}
           notice={notice}
           onBrowseTraining={onBrowseTraining}
-          onOpenSession={openSession}
+          onOpenSession={(projectId, sessionKey) => openSession(projectId, sessionKey, "overview")}
+          onRetry={() => setRefreshKey((value) => value + 1)}
         />
       </CareerPageCarousel>
     );
@@ -341,13 +460,24 @@ export function CareerPage({
   if (activeProjectId === null) {
     return (
       <CareerPageCarousel view="projects" direction={pageDirection} onNavigate={selectPrimaryView}>
-        <CareerProjectDirectory projects={overviewModel.projects} onOpenProject={openProject} />
+        <CareerProjectDirectory
+          projects={overviewModel.projects}
+          loading={loading}
+          notice={notice}
+          onOpenProject={openProject}
+          onRetry={() => setRefreshKey((value) => value + 1)}
+        />
       </CareerPageCarousel>
     );
   }
 
   return (
-    <CareerPageCarousel view="projects" direction={pageDirection} onNavigate={selectPrimaryView}>
+    <CareerPageCarousel
+      view="projects"
+      direction={pageDirection}
+      onNavigate={selectPrimaryView}
+      showNavigationControls={activeProjectId !== "grid-shot"}
+    >
       {activeModule && activeDataset
         ? activeModule.renderProfile({
           dataset: activeDataset,
@@ -356,8 +486,8 @@ export function CareerPage({
           isAdmin,
           settings: projectSettings[activeProjectId],
           onBack: () => setActiveProjectId(null),
-          onRefresh: () => setRefreshKey((value) => value + 1),
-          onOpenSession: (sessionKey) => openSession(activeProjectId, sessionKey),
+          onRefresh: () => refreshActiveProject(activeProjectId),
+          onOpenSession: (sessionKey) => openSession(activeProjectId, sessionKey, "project"),
           onStartTraining: (entryId) => onStartTraining(activeProjectId, entryId),
           onBrowseTraining,
         })

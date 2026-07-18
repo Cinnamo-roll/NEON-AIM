@@ -1,18 +1,24 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   clearPendingGuestTrainingSessions,
   stagePendingGuestTrainingSession,
 } from "../../game/storage/pendingGuestTrainingSessions";
 import { CareerGuestIntro } from "../../pages/CareerPage";
+import { setAppLanguage } from "../../i18n";
 import { CareerGamePlan } from "./CareerGamePlan";
 
 describe("CareerGamePlan", () => {
-  beforeEach(() => clearPendingGuestTrainingSessions());
+  beforeEach(() => {
+    clearPendingGuestTrainingSessions();
+    setAppLanguage("zh-CN");
+  });
+  afterEach(() => setAppLanguage("zh-CN"));
 
   it("stays an explicit placeholder until all training projects are complete", () => {
     const html = renderToStaticMarkup(<CareerGamePlan />);
 
+    expect(html).toContain("career-primary-header");
     expect(html).toMatch(/待开发|Coming later/);
     expect(html).not.toContain("GAME GROWTH PLAN");
     expect(html).toMatch(/31 个训练项目|31 training projects/);
@@ -35,6 +41,18 @@ describe("CareerGamePlan", () => {
     expect(html).toMatch(/即将开放|Coming soon/);
     expect(html).not.toContain("GRID SHOT");
     expect(html).not.toContain("最近训练记录");
+    expect(html).not.toContain("CAREER INTELLIGENCE");
+    expect(html).not.toContain("SESSION STREAM");
+    expect(html).toContain("训练记录流");
+  });
+
+  it("switches decorative and functional guest copy together", () => {
+    setAppLanguage("en-US");
+    const html = renderToStaticMarkup(<CareerGuestIntro onLogin={() => undefined} />);
+
+    expect(html).toContain("SESSION STREAM");
+    expect(html).not.toContain("训练记录流");
+    expect(html).not.toContain("CAREER INTELLIGENCE");
   });
 
   it("shows real in-memory guest sessions in the Career introduction", () => {

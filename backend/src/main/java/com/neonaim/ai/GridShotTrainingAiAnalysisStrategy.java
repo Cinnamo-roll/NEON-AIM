@@ -2,6 +2,7 @@ package com.neonaim.ai;
 
 import com.neonaim.training.api.TrainingAnalysisSnapshot;
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -41,7 +42,8 @@ class GridShotTrainingAiAnalysisStrategy implements TrainingAiAnalysisStrategy {
 			each finding title at most 22, evidence at most 80, advice at most 48, next-action title at most 22,
 			and next-action description at most 90. Do not repeat the same evidence in multiple fields.
 			When a finding describes a supplied signal, copy that signal's code exactly. Otherwise its evidence must quote
-			at least one numeric literal exactly as supplied in the snapshot; never round or recalculate evidence numbers.
+			at least one numeric literal exactly as supplied in the snapshot; never recalculate evidence numbers. Snapshot
+			numbers are already rounded for presentation. Never display more than two digits after a decimal point.
 			averageHitInterval means the interval between hits and must never be described as reaction time.
 			medianHitInterval is the robust center of consecutive-hit intervals; fastestHitInterval and
 			slowestHitInterval are range endpoints and must not outweigh the median or consistency score.
@@ -65,10 +67,33 @@ class GridShotTrainingAiAnalysisStrategy implements TrainingAiAnalysisStrategy {
 
 	private static final String CAREER_INSTRUCTIONS = """
 
-			For CAREER scope, windows are valid recent sessions from one exact comparable configuration, ordered oldest
-			to newest. Benchmark and practice labels do not affect career eligibility and must not be presented as a task,
-			milestone, or prerequisite. If comparableSampleSize is below 5, call the result an initial observation.
-			Only the supplied same-configuration cohort can support a trend claim. Use scorePerMinute rather than raw score.
+			For CAREER scope, the snapshot represents the player's complete valid GRID SHOT history. summaryMetrics are
+			database aggregates over all valid standard and practice sessions; they are not a selectable analysis range.
+			Windows are only the latest six compact sessions, ordered oldest to newest, and their labels identify standard
+			or practice plus configuration. Use them as recent context, never as the whole history.
+			Different durations, target sizes, mode versions, and scoring versions are not directly comparable. Never compare
+			raw scores across configurations. Use scorePerMinute for descriptive context only. A recent trend claim is allowed
+			only when comparison is present: its deltas were calculated inside exact comparable cohorts and then aggregated.
+			Do not infer a trend from mixed-configuration windows or from lifetime and recent averages alone.
+			The answer is a serious user-facing training report, not a collection of slogans. Every field has one distinct job:
+			- headline: describe the overall ability structure in one natural sentence. Do not use a RECENT_* finding title here.
+			- summary: explain the long-term picture and how the main dimensions relate in natural language. It must contain no
+			  numeric literals; all concrete numbers belong in finding evidence so the same metric is not repeated.
+			- findings: include an actual demonstrated ability strength only when a POSITIVE ability signal supports it; include
+			  the supplied RECENT_* change when present; and include at most one main limiter. A finding's evidence states what
+			  happened, while its advice explains why it matters. Advice must not repeat the training plan.
+			- nextAction: give one focused block of 3 to 5 matching-configuration sessions, say what to practise, and provide at
+			  most two achievable measurable targets derived from supplied recent or lifetime values.
+			Never mention the total record count or configuration count in the report. Never call record count, configuration
+			count, persistence, or data coverage an ability strength. If no positive ability signal exists, do not invent a
+			strength. Do not write generic claims such as \"training foundation is solid\".
+			Do not turn standard and practice counts into competing scores. Headline, finding titles, and next-action title must
+			be meaningfully different: none may repeat or contain another title. Do not restate one conclusion under multiple labels.
+			Use natural player-facing Chinese. Avoid awkward titles such as \"提升稳定度训练\" or \"加强命中率训练\"; name the
+			specific outcome instead, such as narrowing rhythm fluctuation or preserving accuracy while increasing pace.
+			Never use report labels such as "能力画像", "已确认的优势", "主要限制", "趋势含义", or "下一阶段训练方案"
+			inside generated copy. Avoid title-only noun phrases ending in "训练", including "稳定节奏训练". The next-action
+			title must sound like direct coaching, for example "先把后段节奏稳住" or "提速时守住准度".
 			""";
 
 	@Override
@@ -81,7 +106,7 @@ class GridShotTrainingAiAnalysisStrategy implements TrainingAiAnalysisStrategy {
 		return scope == TrainingAnalysisSnapshot.Scope.SESSION
 				? new PromptSpec("grid-shot-session-v11", "ai-analysis-v4",
 						BASE_INSTRUCTIONS + SESSION_INSTRUCTIONS, SUPPORTED_TARGET_METRICS)
-				: new PromptSpec("grid-shot-career-v8", "grid-shot-career-ai-v4",
+				: new PromptSpec("grid-shot-career-v11", "grid-shot-career-ai-v7",
 						BASE_INSTRUCTIONS + CAREER_INSTRUCTIONS, SUPPORTED_TARGET_METRICS);
 	}
 
@@ -111,7 +136,7 @@ class GridShotTrainingAiAnalysisStrategy implements TrainingAiAnalysisStrategy {
 	@Override
 	public void validateTarget(TrainingAnalysisSnapshot snapshot, TrainingAnalysisProvider.Target target) {
 		validateTarget(target);
-		if (snapshot.scope() != TrainingAnalysisSnapshot.Scope.SESSION || !snapshot.integrity().passed()) return;
+		if (!snapshot.integrity().passed()) return;
 		Double current = currentValue(snapshot, target.metric());
 		if (current == null) return;
 		double maximumStep = switch (target.metric()) {
@@ -134,27 +159,35 @@ class GridShotTrainingAiAnalysisStrategy implements TrainingAiAnalysisStrategy {
 	@Override
 	public Optional<TrainingAnalysisProvider.AnalysisResult> recoverRejectedResult(
 			TrainingAnalysisSnapshot snapshot, TrainingAnalysisProvider.AnalysisResult result) {
+		boolean career = snapshot.scope() == TrainingAnalysisSnapshot.Scope.CAREER;
 		List<TrainingAnalysisProvider.Finding> findings = recoverFindings(snapshot, result.findings());
 		List<TrainingAnalysisProvider.Target> targets = recoverTargets(snapshot, result.nextAction().targets());
 		return Optional.of(new TrainingAnalysisProvider.AnalysisResult(
-				safeText(result.headline(), "本局表现已完成校准", 120),
-				safeText(result.summary(), "AI 结论已根据本局有效训练数据重新校准。", 320),
+				safeText(result.headline(), career ? "训练档案已完成校准" : "本局表现已完成校准", 120),
+				safeText(result.summary(), career
+						? "AI 结论已根据全部有效 GRID SHOT 历史记录重新校准。"
+						: "AI 结论已根据本局有效训练数据重新校准。", 320),
 				findings,
 				new TrainingAnalysisProvider.NextAction(
-						safeText(result.nextAction().title(), "下一局保持单一训练重点", 80),
-						safeText(result.nextAction().description(), "保持当前训练配置，优先完成下方量化目标。", 240),
+						safeText(result.nextAction().title(), career ? "下一阶段保持单一重点" : "下一局保持单一训练重点", 80),
+						safeText(result.nextAction().description(), career
+								? "从当前训练基础出发，优先完成下方量化目标。"
+								: "保持当前训练配置，优先完成下方量化目标。", 240),
 						targets),
 				result.model(), result.usage()));
 	}
 
 	private List<TrainingAnalysisProvider.Finding> recoverFindings(TrainingAnalysisSnapshot snapshot,
 			List<TrainingAnalysisProvider.Finding> supplied) {
+		boolean career = snapshot.scope() == TrainingAnalysisSnapshot.Scope.CAREER;
 		List<TrainingAnalysisProvider.Finding> recovered = new ArrayList<>();
 		int count = Math.min(3, Math.max(1, supplied.size()));
 		for (int index = 0; index < count; index++) {
 			TrainingAnalysisProvider.Finding original = index < supplied.size() ? supplied.get(index) : null;
 			TrainingAnalysisSnapshot.Signal signal = matchingSignal(snapshot, original, index);
-			String fallbackTitle = signal == null ? "本局数据已完成复核" : signalTitle(signal.code());
+			String fallbackTitle = signal == null
+					? career ? "训练档案已完成复核" : "本局数据已完成复核"
+					: signalTitle(signal.code());
 			String code = signal != null ? signal.code()
 					: original != null && original.code().matches("[A-Z0-9_]{3,64}")
 							? original.code() : "SESSION_METRICS";
@@ -163,7 +196,7 @@ class GridShotTrainingAiAnalysisStrategy implements TrainingAiAnalysisStrategy {
 					safeText(original == null ? null : original.title(), fallbackTitle, 120),
 					signal == null ? summaryEvidence(snapshot) : signalEvidence(snapshot, signal),
 					safeText(original == null ? null : original.advice(),
-							"下一局保持相同配置，只调整一个训练重点。", 240)));
+							career ? "下一阶段只调整一个训练重点。" : "下一局保持相同配置，只调整一个训练重点。", 240)));
 		}
 		return List.copyOf(recovered);
 	}
@@ -208,8 +241,10 @@ class GridShotTrainingAiAnalysisStrategy implements TrainingAiAnalysisStrategy {
 	}
 
 	private static String summaryEvidence(TrainingAnalysisSnapshot snapshot) {
-		Double accuracy = snapshot.summaryMetrics().get("accuracy");
-		Double pace = snapshot.summaryMetrics().get("targetsPerMinute");
+		Double accuracy = snapshot.summaryMetrics().get(snapshot.scope() == TrainingAnalysisSnapshot.Scope.CAREER
+				? "recentAccuracy" : "accuracy");
+		Double pace = snapshot.summaryMetrics().get(snapshot.scope() == TrainingAnalysisSnapshot.Scope.CAREER
+				? "averageTargetsPerMinute" : "targetsPerMinute");
 		if (accuracy != null && pace != null) {
 			return "准确率 " + exactNumber(accuracy) + "% ，命中速度 " + exactNumber(pace) + " TPM。";
 		}
@@ -229,32 +264,32 @@ class GridShotTrainingAiAnalysisStrategy implements TrainingAiAnalysisStrategy {
 				.orElseGet(() -> snapshot.signals().isEmpty() ? "" : snapshot.signals().getFirst().code());
 		if ("LATE_ACCURACY_DROP".equals(signal) || "PACE_CONTROL_TRADEOFF".equals(signal)) {
 			double current = currentValue(snapshot, "lastPhaseAccuracy") == null
-					? snapshot.summaryMetrics().getOrDefault("accuracy", 0d)
+					? currentOrDefault(snapshot, "accuracy", 0d)
 					: currentValue(snapshot, "lastPhaseAccuracy");
 			return new TrainingAnalysisProvider.Target("lastPhaseAccuracy", "后段准确率",
 					TrainingAnalysisProvider.Operator.AT_LEAST, clamp(current + 5, 0, 95), "%");
 		}
 		if ("RHYTHM_INSTABILITY".equals(signal)) {
-			double consistency = snapshot.summaryMetrics().getOrDefault("consistencyScore", 0d);
+			double consistency = currentOrDefault(snapshot, "consistencyScore", 0d);
 			return new TrainingAnalysisProvider.Target("consistencyScore", "稳定度",
 					TrainingAnalysisProvider.Operator.AT_LEAST, clamp(consistency + 10, 0, 75), "分");
 		}
 		if ("PACE_OPPORTUNITY".equals(signal)) {
-			double interval = snapshot.summaryMetrics().getOrDefault("averageHitInterval", 400d);
+			double interval = currentOrDefault(snapshot, "averageHitInterval", 400d);
 			return new TrainingAnalysisProvider.Target("averageHitInterval", "平均命中间隔",
 					TrainingAnalysisProvider.Operator.AT_MOST, clamp(interval - 30, 50, 2_000), "ms");
 		}
 		if ("LATE_PACE_DROP".equals(signal)) {
-			double pace = snapshot.summaryMetrics().getOrDefault("targetsPerMinute", 1d);
+			double pace = currentOrDefault(snapshot, "targetsPerMinute", 1d);
 			return new TrainingAnalysisProvider.Target("targetsPerMinute", "命中速度",
 					TrainingAnalysisProvider.Operator.AT_LEAST, clamp(pace + 5, 1, 600), "TPM");
 		}
-		double accuracy = snapshot.summaryMetrics().getOrDefault("accuracy", 0d);
+		double accuracy = currentOrDefault(snapshot, "accuracy", 0d);
 		if ("ACCURACY_LIMITS_PACE".equals(signal)) {
 			return new TrainingAnalysisProvider.Target("accuracy", "准确率",
 					TrainingAnalysisProvider.Operator.AT_LEAST, clamp(accuracy + 5, 0, 90), "%");
 		}
-		double combo = snapshot.summaryMetrics().getOrDefault("maxCombo", 1d);
+		double combo = currentOrDefault(snapshot, "maxCombo", 1d);
 		return new TrainingAnalysisProvider.Target("maxCombo", "最高连击",
 				TrainingAnalysisProvider.Operator.AT_LEAST, clamp(combo + 3, 1, 1_000), "次");
 	}
@@ -262,9 +297,27 @@ class GridShotTrainingAiAnalysisStrategy implements TrainingAiAnalysisStrategy {
 	private static Double currentValue(TrainingAnalysisSnapshot snapshot, String metric) {
 		if ("lastPhaseAccuracy".equals(metric)) {
 			if (snapshot.windows().isEmpty()) return null;
-			return snapshot.windows().getLast().metrics().get("accuracy");
+			return snapshot.windows().getLast().metrics().get("lastPhaseAccuracy");
+		}
+		if (snapshot.scope() == TrainingAnalysisSnapshot.Scope.CAREER) {
+			return switch (metric) {
+				case "accuracy" -> snapshot.summaryMetrics().get("recentAccuracy");
+				case "consistencyScore" -> snapshot.summaryMetrics().get("recentConsistencyScore");
+				case "targetsPerMinute" -> snapshot.summaryMetrics().get("averageTargetsPerMinute");
+				case "averageHitInterval" -> snapshot.windows().isEmpty() ? null
+						: snapshot.windows().getLast().metrics().get("averageHitInterval");
+				case "maxCombo" -> snapshot.windows().stream()
+						.map(window -> window.metrics().get("maxCombo"))
+						.filter(java.util.Objects::nonNull).max(Double::compareTo).orElse(null);
+				default -> snapshot.summaryMetrics().get(metric);
+			};
 		}
 		return snapshot.summaryMetrics().get(metric);
+	}
+
+	private static double currentOrDefault(TrainingAnalysisSnapshot snapshot, String metric, double fallback) {
+		Double current = currentValue(snapshot, metric);
+		return current == null ? fallback : current;
 	}
 
 	private static TrainingAnalysisProvider.Severity severity(TrainingAnalysisSnapshot.Signal signal) {
@@ -279,7 +332,11 @@ class GridShotTrainingAiAnalysisStrategy implements TrainingAiAnalysisStrategy {
 	private static String signalTitle(String code) {
 		return switch (code) {
 			case "COMPARABLE_COHORT" -> "同配置训练记录可以进行比较";
+			case "TRAINING_HISTORY_FOUNDATION" -> "已经形成可用的训练档案";
 			case "CONTROL_FOUNDATION" -> "准度与节奏都保持稳定";
+			case "RECENT_IMPROVEMENT" -> "近期同配置表现正在提升";
+			case "RECENT_STABLE" -> "近期同配置表现保持稳定";
+			case "RECENT_DECLINE" -> "近期同配置表现有所回落";
 			case "COMBO_STRENGTH" -> "已经打出连续命中的状态";
 			case "ACCURACY_LIMITS_PACE" -> "准确率正在限制有效速度";
 			case "LATE_ACCURACY_DROP" -> "后段准确率需要稳定";
@@ -297,16 +354,24 @@ class GridShotTrainingAiAnalysisStrategy implements TrainingAiAnalysisStrategy {
 	private static String metricLabel(String metric) {
 		return switch (metric) {
 			case "comparableSampleSize" -> "同配置有效记录数";
-			case "accuracy", "firstAccuracy", "lastAccuracy" -> "准确率";
+			case "validSessionCount" -> "全部有效记录数";
+			case "standardSessionCount" -> "标准训练记录数";
+			case "practiceSessionCount" -> "自由练习记录数";
+			case "configurationCount" -> "训练配置数";
+			case "accuracy", "firstAccuracy", "lastAccuracy", "averageAccuracy", "recentAccuracy" -> "准确率";
 			case "targetAccuracy" -> "规则准确率参考线";
 			case "accuracyDelta" -> "准确率变化";
-			case "targetsPerMinute", "targetsPerMinuteDelta", "firstTargetsPerMinute", "lastTargetsPerMinute" -> "命中速度";
+			case "targetsPerMinute", "averageTargetsPerMinute", "targetsPerMinuteDelta",
+					"firstTargetsPerMinute", "lastTargetsPerMinute" -> "命中速度";
+			case "averageScorePerMinute", "bestScorePerMinute", "recentScorePerMinute" -> "每分钟得分";
+			case "scorePerMinuteDeltaPercent" -> "同配置每分钟得分变化";
 			case "averageHitInterval" -> "平均命中间隔";
 			case "medianHitInterval" -> "命中间隔中位数";
 			case "fastestHitInterval" -> "最快命中间隔";
 			case "slowestHitInterval" -> "最慢命中间隔";
 			case "averageTargetLifetime" -> "目标平均停留时间";
-			case "consistencyScore", "consistencyDelta" -> "稳定度";
+			case "consistencyScore", "averageConsistencyScore", "recentConsistencyScore",
+					"consistencyDelta", "consistencyScoreDelta" -> "稳定度";
 			case "targetConsistency" -> "规则稳定度参考线";
 			case "maxCombo" -> "最高连击";
 			case "hits" -> "命中数";
@@ -346,7 +411,8 @@ class GridShotTrainingAiAnalysisStrategy implements TrainingAiAnalysisStrategy {
 	}
 
 	private static String exactNumber(double value) {
-		return BigDecimal.valueOf(value).stripTrailingZeros().toPlainString();
+		return BigDecimal.valueOf(value).setScale(2, RoundingMode.HALF_UP)
+				.stripTrailingZeros().toPlainString();
 	}
 
 	private static double clamp(double value, double minimum, double maximum) {

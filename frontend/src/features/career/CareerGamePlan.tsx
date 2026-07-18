@@ -31,8 +31,8 @@ const PLANNED_FEATURES = [
 export function CareerGamePlan() {
   return (
     <main className="workspace-main career-game-plan">
-      <header className="career-game-plan-header">
-        <div>
+      <header className="career-primary-header career-game-plan-header">
+        <div className="career-primary-header-content">
           <h1>{tx("游戏成长计划", "Game growth plan")}</h1>
         </div>
       </header>

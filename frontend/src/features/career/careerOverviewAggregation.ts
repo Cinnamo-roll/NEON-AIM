@@ -102,7 +102,10 @@ export function aggregateCareerOverview(
 ): CareerOverviewModel {
   const weeklyCutoff = now - WEEK_MS;
   const allActivity = contributions.flatMap((contribution) => contribution.activity);
-  const weeklySessions = allActivity.filter((session) => time(session.completedAt) >= weeklyCutoff);
+  const weeklySessions = allActivity.filter((session) => {
+    const completedAt = time(session.completedAt);
+    return completedAt >= weeklyCutoff && completedAt <= now;
+  });
   const updatedAt = contributions.map((contribution) => contribution.updatedAt)
     .sort((left, right) => time(right) - time(left))[0] ?? null;
   const insightContribution = contributions
@@ -120,7 +123,11 @@ export function aggregateCareerOverview(
     abilities: aggregateAbilities(contributions),
     projects: contributions.map((contribution) => contribution.project),
     recentSessions: contributions.flatMap((contribution) => contribution.recentSessions)
-      .sort((left, right) => time(right.completedAt) - time(left.completedAt)).slice(0, 8),
+      .filter((session) => {
+        const completedAt = time(session.completedAt);
+        return completedAt >= weeklyCutoff && completedAt <= now;
+      })
+      .sort((left, right) => time(right.completedAt) - time(left.completedAt)),
     trend: trendContribution?.trend ?? [],
     trendLabels: trendContribution?.trendLabels ?? {
       primary: tx("主要指标", "Primary metric"),

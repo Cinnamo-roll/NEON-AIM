@@ -32,10 +32,17 @@ interface CareerPageCarouselProps {
   view: CareerPrimaryView;
   direction: CareerPageDirection;
   onNavigate: (view: CareerPrimaryView, direction: CareerPageDirection) => void;
+  showNavigationControls?: boolean;
   children: ReactNode;
 }
 
-export function CareerPageCarousel({ view, direction, onNavigate, children }: CareerPageCarouselProps) {
+export function CareerPageCarousel({
+  view,
+  direction,
+  onNavigate,
+  showNavigationControls = true,
+  children,
+}: CareerPageCarouselProps) {
   const index = VIEW_ORDER.indexOf(view);
   const previous = VIEW_ORDER[(index - 1 + VIEW_ORDER.length) % VIEW_ORDER.length];
   const next = VIEW_ORDER[(index + 1) % VIEW_ORDER.length];
@@ -126,7 +133,9 @@ export function CareerPageCarousel({ view, direction, onNavigate, children }: Ca
           </motion.div>
         </AnimatePresence>
       </div>
-      {typeof document === "undefined" ? null : createPortal(navigationControls, document.body)}
+      {!showNavigationControls || typeof document === "undefined"
+        ? null
+        : createPortal(navigationControls, document.body)}
     </>
   );
 }

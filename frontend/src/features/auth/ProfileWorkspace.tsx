@@ -1,22 +1,18 @@
 import { AnimatePresence, motion } from "framer-motion";
 import {
-  Activity,
-  Crosshair,
   AtSign,
   Check,
   ChevronRight,
   Eye,
   EyeOff,
-  Focus,
   KeyRound,
   LogOut,
   Mail,
-  Orbit,
   Palette,
-  Radar,
   Save,
   ShieldCheck,
   Trash2,
+  Trophy,
   UserRound,
   UsersRound,
   X,
@@ -35,7 +31,7 @@ import { tx } from "../../i18n";
 import "./profileWorkspace.css";
 
 type AuthMode = "login" | "register";
-type ProfileTab = "career" | "identity" | "account";
+type ProfileTab = "achievements" | "identity" | "account";
 
 const gameOptions = [
   ["", "暂未设置"],
@@ -51,12 +47,7 @@ const gameOptions = [
   ["crossfire", "CrossFire"],
 ] as const;
 
-const avatarOptions: Array<{ id: AvatarPreset; icon: LucideIcon }> = [
-  { id: "pulse", icon: Crosshair },
-  { id: "vanguard", icon: Focus },
-  { id: "orbit", icon: Orbit },
-  { id: "nova", icon: Radar },
-];
+const avatarOptions: AvatarPreset[] = ["pulse", "vanguard", "orbit", "nova"];
 
 const cardOptions: AccentColor[] = ["cyan", "violet", "amber", "emerald"];
 
@@ -286,23 +277,54 @@ function AuthGateway() {
   );
 }
 
+function AvatarMark({ preset }: { preset: AvatarPreset }) {
+  if (preset === "vanguard") {
+    return (
+      <svg className="avatar-mark" viewBox="0 0 48 48" fill="none" aria-hidden="true">
+        <path d="m10 14 14 10 14-10" />
+        <path d="m14 24 10 10 10-10" />
+        <path className="avatar-mark-secondary" d="M24 9v25" />
+      </svg>
+    );
+  }
+  if (preset === "orbit") {
+    return (
+      <svg className="avatar-mark" viewBox="0 0 48 48" fill="none" aria-hidden="true">
+        <circle className="avatar-mark-secondary" cx="24" cy="24" r="7" />
+        <ellipse cx="24" cy="24" rx="17" ry="8.5" transform="rotate(-24 24 24)" />
+        <circle className="avatar-mark-solid" cx="37.5" cy="16.5" r="2.5" />
+      </svg>
+    );
+  }
+  if (preset === "nova") {
+    return (
+      <svg className="avatar-mark" viewBox="0 0 48 48" fill="none" aria-hidden="true">
+        <path d="m24 7 4.3 12.7L41 24l-12.7 4.3L24 41l-4.3-12.7L7 24l12.7-4.3L24 7Z" />
+        <circle className="avatar-mark-solid" cx="24" cy="24" r="3.5" />
+      </svg>
+    );
+  }
+  return (
+    <svg className="avatar-mark" viewBox="0 0 48 48" fill="none" aria-hidden="true">
+      <path className="avatar-mark-solid" d="M12 11h5.5L30.5 28V11H36v26h-5.5l-13-17v17H12V11Z" />
+    </svg>
+  );
+}
+
 export function PlayerAvatar({ displayName, preset, size = "regular" }: { displayName: string; preset: AvatarPreset; size?: "regular" | "large" | "choice" }) {
-  const selectedPreset = avatarOptions.find((option) => option.id === preset) ?? avatarOptions[0];
-  const AvatarIcon = selectedPreset.icon;
   return (
     <div className={`profile-avatar preset-${preset} avatar-${size}`} aria-label={`${displayName} ${tx("的头像", "avatar")}`}>
-      <AvatarIcon className="avatar-line-icon" aria-hidden="true" />
+      <AvatarMark preset={preset} />
     </div>
   );
 }
 
-function ProfileOverview() {
+function AchievementsOverview() {
   return (
-    <motion.section className="profile-career-empty" aria-label={tx("生涯模块待开发", "Career module coming soon")} initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-      <span><Activity size={24} /></span>
-      <small>CAREER MODULE</small>
-      <h2>{tx("生涯模块", "Career module")}</h2>
-      <p>{tx("待开发", "Coming soon")}</p>
+    <motion.section className="profile-achievements-empty" aria-label={tx("成就系统待开发", "Achievements coming soon")} initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+      <span><Trophy size={24} /></span>
+      <h2>{tx("成就系统待开发", "Achievements are in development")}</h2>
+      <p>{tx("训练里程碑与专属徽章将在后续版本开放。", "Training milestones and badges will arrive in a future update.")}</p>
     </motion.section>
   );
 }
@@ -345,9 +367,9 @@ function ProfileEditor({ onDirtyChange }: { onDirtyChange: (dirty: boolean) => v
           <legend>{tx("选择头像", "Choose avatar")}</legend>
           <div className="avatar-choice-grid">
             {avatarOptions.map((option, index) => (
-              <button type="button" key={option.id} className={currentPreset === option.id ? "selected" : ""} onClick={() => setValue("avatarPreset", option.id)} aria-pressed={currentPreset === option.id} aria-label={`${tx("选择头像", "Select avatar")} ${index + 1}`}>
-                <PlayerAvatar displayName={currentDisplayName} preset={option.id} size="choice" />
-                {currentPreset === option.id && <Check size={14} />}
+              <button type="button" key={option} className={currentPreset === option ? "selected" : ""} onClick={() => setValue("avatarPreset", option)} aria-pressed={currentPreset === option} aria-label={`${tx("选择头像", "Select avatar")} ${index + 1}`}>
+                <PlayerAvatar displayName={currentDisplayName} preset={option} size="choice" />
+                {currentPreset === option && <Check size={14} />}
               </button>
             ))}
           </div>
@@ -463,7 +485,7 @@ function SecurityCenter() {
 
 function AuthenticatedProfile() {
   const user = useAuthStore((state) => state.user)!;
-  const [tab, setTab] = useState<ProfileTab>("career");
+  const [tab, setTab] = useState<ProfileTab>("achievements");
   const [profileDirty, setProfileDirty] = useState(false);
   const [pendingTab, setPendingTab] = useState<ProfileTab | null>(null);
   const requestTab = (next: ProfileTab) => {
@@ -477,7 +499,6 @@ function AuthenticatedProfile() {
   return (
     <div className="authenticated-profile">
       <section className={`profile-command-card accent-${user.accentColor}`}>
-        <div className="profile-scanline" />
         <PlayerAvatar displayName={user.displayName} preset={user.avatarPreset} size="large" />
         <div className="profile-identity-copy">
           <h1>{user.displayName}</h1>
@@ -486,13 +507,13 @@ function AuthenticatedProfile() {
       </section>
       <FeedbackBanner floating />
       <nav className="profile-tabs" aria-label={tx("个人档案导航", "Player profile navigation")}>
-        <button className={tab === "career" ? "active" : ""} onClick={() => requestTab("career")}><Activity size={17} /><span><b>{tx("生涯", "Career")}</b></span></button>
+        <button className={tab === "achievements" ? "active" : ""} onClick={() => requestTab("achievements")}><Trophy size={17} /><span><b>{tx("成就", "Achievements")}</b></span></button>
         <button className={tab === "identity" ? "active" : ""} onClick={() => requestTab("identity")}><UserRound size={17} /><span><b>{tx("资料", "Profile")}</b></span>{profileDirty && <i />}</button>
         <button className={tab === "account" ? "active" : ""} onClick={() => requestTab("account")}><ShieldCheck size={17} /><span><b>{tx("安全", "Security")}</b></span></button>
       </nav>
       <AnimatePresence mode="wait">
-        <div key={tab}>{tab === "career" ? <ProfileOverview /> : tab === "identity" ? <ProfileEditor onDirtyChange={setProfileDirty} /> : <SecurityCenter />}</div>
-        {pendingTab && <ConfirmationDialog icon={Palette} title={tx("放弃未保存的修改？", "Discard unsaved changes?")} description={tx("你对头像、名片或资料的修改还没有保存，离开后这些修改会丢失。", "Your avatar, card, or profile changes have not been saved and will be lost.")} confirmLabel={tx("放弃修改", "Discard changes")} tone="danger" onCancel={() => setPendingTab(null)} onConfirm={() => { const next = pendingTab; setPendingTab(null); setProfileDirty(false); setTab(next); }} />}
+        <div key={tab}>{tab === "achievements" ? <AchievementsOverview /> : tab === "identity" ? <ProfileEditor onDirtyChange={setProfileDirty} /> : <SecurityCenter />}</div>
+        {pendingTab && <ConfirmationDialog icon={Palette} title={tx("放弃未保存的修改？", "Discard unsaved changes?")} description={tx("你对头像、名片或资料的修改还没有保存，离开后这些修改会丢失。", "Your avatar, card, or profile changes have not been saved and will be lost.")} confirmLabel={tx("放弃修改", "Discard changes")} tone="warning" onCancel={() => setPendingTab(null)} onConfirm={() => { const next = pendingTab; setPendingTab(null); setProfileDirty(false); setTab(next); }} />}
       </AnimatePresence>
     </div>
   );

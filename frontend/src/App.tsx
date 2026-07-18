@@ -706,7 +706,7 @@ function HomePage() {
           </div>
           <div className="mission-actions">
             <button className="primary" onClick={() => openGridShotSession("benchmark")}>
-              <Crosshair size={18} />{tx("开始基准训练", "Start benchmark")}<ChevronRight size={17} />
+              <Crosshair size={18} />{tx("开始标准训练", "Start standard training")}<ChevronRight size={17} />
             </button>
             <button onClick={() => setPage("modes")}>{tx("更换训练", "Change drill")}</button>
           </div>
@@ -810,11 +810,11 @@ const futureHubContent: Record<FutureHubKind, {
   },
   ranking: {
     title: ["排行", "Ranks"],
-    description: ["按训练地图、球体大小和时长比较完全相同配置下的成绩。", "Compare scores from identical map, target-size, and duration settings."],
+    description: ["比较各训练完全相同配置下的成绩。", "Compare the performance under identical training configurations."],
     icon: Award,
     modules: [
-      { icon: Award, title: ["单项排行", "Drill ranks"] },
-      { icon: Target, title: ["地图评级", "Map rating"] },
+      { icon: Award, title: ["训练排行", "Training ranking"] },
+      { icon: Target, title: ["总体排行", "Overall ranking"] },
       { icon: Activity, title: ["我的成绩", "My scores"] },
     ],
   },
@@ -1822,6 +1822,10 @@ function App() {
   const gridShotSettings = useApp((s) => s.gridShotSettings);
   const gridShotSessionType = useApp((s) => s.gridShotSessionType);
   const careerTargetSize = useApp((s) => s.gridShotSettings.targetSize);
+  const careerProjectSettings = useMemo(
+    () => ({ "grid-shot": { targetSize: careerTargetSize } }),
+    [careerTargetSize],
+  );
   const setPage = useApp((s) => s.setPage);
   const openAccountAccess = useApp((s) => s.openAccountAccess);
   const applyAccountPreferences = useApp((s) => s.applyAccountPreferences);
@@ -1928,7 +1932,7 @@ function App() {
           ) : page === "progress" ? (
             <CareerPage
               key={authUserId ?? authStatus}
-              projectSettings={{ "grid-shot": { targetSize: careerTargetSize } }}
+              projectSettings={careerProjectSettings}
               onStartTraining={(projectId, entryId) => {
                 if (projectId === "grid-shot") openGridShotSession(entryId === "benchmark" ? "benchmark" : "practice");
                 else setPage("modes");

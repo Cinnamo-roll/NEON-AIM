@@ -592,7 +592,7 @@ export function GridShotTrainingPage({ settings, gridShotSettings, sessionType, 
         <div className="training-overlay ready-panel">
           <div className="grid-shot-benchmark-badge" data-session-type={benchmarkMode ? "benchmark" : "practice"}>
             {benchmarkMode ? <Target size={14} /> : <SlidersHorizontal size={14} />}
-            <b>{benchmarkMode ? tx("基准训练", "Benchmark") : tx("自由练习", "Free practice")}</b>
+            <b>{benchmarkMode ? tx("标准训练", "Standard training") : tx("自由练习", "Free practice")}</b>
             {authStatus !== "authenticated" && (
               <span>{benchmarkMode
                 ? tx("完成后登录可保存本局并计入生涯", "Sign in after the run to save it to Career")
@@ -607,7 +607,7 @@ export function GridShotTrainingPage({ settings, gridShotSettings, sessionType, 
             <span>{tx("目标尺寸", "Target size")}<b>{tx(targetSizeLabels[activeTargetSize.id][0], targetSizeLabels[activeTargetSize.id][1])}</b></span>
           </div>
           <div className="ready-actions">
-            <button className="primary" onClick={start}><Play size={18} />{benchmarkMode ? tx("开始基准训练", "Start benchmark") : tx("开始自由练习", "Start free practice")}</button>
+            <button className="primary" onClick={start}><Play size={18} />{benchmarkMode ? tx("开始标准训练", "Start standard training") : tx("开始自由练习", "Start free practice")}</button>
             <button onClick={() => setTrainingSettingsOpen(true)}><SlidersHorizontal size={17} />{tx("训练设置", "Training settings")}</button>
             <button onClick={onHome}><Home size={17} />{tx("返回大厅", "Back to lobby")}</button>
           </div>

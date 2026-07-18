@@ -4,6 +4,18 @@
   --panel: rgba(9, 17, 26, 0.8);
   --line: #1c2b38;
   --muted: #758795;
+  --aim-grade-d: #7f8998;
+  --aim-grade-d-rgb: 127 137 152;
+  --aim-grade-c: #69bd82;
+  --aim-grade-c-rgb: 105 189 130;
+  --aim-grade-b: #5c9fea;
+  --aim-grade-b-rgb: 92 159 234;
+  --aim-grade-a: #9b73e8;
+  --aim-grade-a-rgb: 155 115 232;
+  --aim-grade-s: #e9ad45;
+  --aim-grade-s-rgb: 233 173 69;
+  --aim-grade-s-plus: #f06479;
+  --aim-grade-s-plus-rgb: 240 100 121;
 }
 .shell {
   min-height: 100vh;
@@ -6034,12 +6046,12 @@ body:has(.session-review-page),
 }
 
 /* Session review v9: project-driven data, clearer report hierarchy, and AI workspace. */
-.session-review-page[data-grade="D"] { --result-grade: #7f8998; --result-grade-rgb: 127 137 152; }
-.session-review-page[data-grade="C"] { --result-grade: #69bd82; --result-grade-rgb: 105 189 130; }
-.session-review-page[data-grade="B"] { --result-grade: #5c9fea; --result-grade-rgb: 92 159 234; }
-.session-review-page[data-grade="A"] { --result-grade: #9b73e8; --result-grade-rgb: 155 115 232; }
-.session-review-page[data-grade="S"] { --result-grade: #e9ad45; --result-grade-rgb: 233 173 69; }
-.session-review-page[data-grade="S+"] { --result-grade: #f06479; --result-grade-rgb: 240 100 121; }
+.session-review-page[data-grade="D"] { --result-grade: var(--aim-grade-d); --result-grade-rgb: var(--aim-grade-d-rgb); }
+.session-review-page[data-grade="C"] { --result-grade: var(--aim-grade-c); --result-grade-rgb: var(--aim-grade-c-rgb); }
+.session-review-page[data-grade="B"] { --result-grade: var(--aim-grade-b); --result-grade-rgb: var(--aim-grade-b-rgb); }
+.session-review-page[data-grade="A"] { --result-grade: var(--aim-grade-a); --result-grade-rgb: var(--aim-grade-a-rgb); }
+.session-review-page[data-grade="S"] { --result-grade: var(--aim-grade-s); --result-grade-rgb: var(--aim-grade-s-rgb); }
+.session-review-page[data-grade="S+"] { --result-grade: var(--aim-grade-s-plus); --result-grade-rgb: var(--aim-grade-s-plus-rgb); }
 
 .session-review-page .result-scoreboard-v3,
 .session-review-page .training-goal-progress,

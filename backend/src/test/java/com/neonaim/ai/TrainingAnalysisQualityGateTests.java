@@ -236,6 +236,105 @@ class TrainingAnalysisQualityGateTests {
 				.hasMessageContaining("omitted an evidenced strength");
 	}
 
+	@Test
+	void rejectsCareerReportThatRepeatsASectionTitle() {
+		TrainingAnalysisSnapshot snapshot = careerSnapshot();
+		TrainingAnalysisProvider.AnalysisResult result = new TrainingAnalysisProvider.AnalysisResult(
+				"Recent accuracy declined", "Long-term control and recent direction need separate review.",
+				List.of(
+						new TrainingAnalysisProvider.Finding("RHYTHM_INSTABILITY",
+								TrainingAnalysisProvider.Severity.OPPORTUNITY, "Rhythm is the main constraint",
+								"Consistency is 30.8.", "This limits repeatable pace."),
+						new TrainingAnalysisProvider.Finding("RECENT_DECLINE",
+								TrainingAnalysisProvider.Severity.OPPORTUNITY, "Recent accuracy declined",
+								"Accuracy changed by 6.8 percentage points.", "The change is based on matching setups.")),
+				new TrainingAnalysisProvider.NextAction("Narrow rhythm variation",
+						"Use the same setup for 3 sessions and keep one focus.",
+						List.of(new TrainingAnalysisProvider.Target("consistencyScore", "Stability",
+								TrainingAnalysisProvider.Operator.AT_LEAST, 40, "points"))),
+				"acceptance-model", new TrainingAnalysisProvider.TokenUsage(300, 120));
+
+		assertThatThrownBy(() -> gate.validate(snapshot, result))
+				.hasMessageContaining("section titles must be distinct");
+	}
+
+	@Test
+	void acceptsCareerReportWithDistinctRolesAndARealisticTrainingBlock() {
+		TrainingAnalysisSnapshot snapshot = careerSnapshot();
+		TrainingAnalysisProvider.AnalysisResult result = new TrainingAnalysisProvider.AnalysisResult(
+				"Control varies more than pace", "The long-term profile points to repeatability as the clearest limiter.",
+				List.of(
+						new TrainingAnalysisProvider.Finding("RHYTHM_INSTABILITY",
+								TrainingAnalysisProvider.Severity.OPPORTUNITY, "Rhythm is the main constraint",
+								"Consistency is 30.8.", "This limits repeatable pace."),
+						new TrainingAnalysisProvider.Finding("RECENT_DECLINE",
+								TrainingAnalysisProvider.Severity.OPPORTUNITY, "Matching-set results moved down",
+								"Accuracy changed by 6.8 percentage points.", "The comparison uses matching setups.")),
+				new TrainingAnalysisProvider.NextAction("Make the click rhythm repeatable",
+						"Use the same setup for 3 sessions and keep one focus.",
+						List.of(new TrainingAnalysisProvider.Target("consistencyScore", "Stability",
+								TrainingAnalysisProvider.Operator.AT_LEAST, 40, "points"))),
+				"acceptance-model", new TrainingAnalysisProvider.TokenUsage(300, 120));
+
+		assertThatNoException().isThrownBy(() -> gate.validate(snapshot, result));
+	}
+
+	@Test
+	void rejectsCareerCopyThatLeaksRawDecimalPrecision() {
+		TrainingAnalysisSnapshot snapshot = careerSnapshot();
+		TrainingAnalysisProvider.AnalysisResult result = new TrainingAnalysisProvider.AnalysisResult(
+				"Control varies more than pace", "Repeatability is the clearest issue in the current history.",
+				List.of(new TrainingAnalysisProvider.Finding("RHYTHM_INSTABILITY",
+						TrainingAnalysisProvider.Severity.OPPORTUNITY, "Rhythm varies too much",
+						"Consistency is 30.812345.", "This makes the pace hard to repeat.")),
+				new TrainingAnalysisProvider.NextAction("Make the click rhythm repeatable",
+						"Use the same setup for 3 sessions and keep one focus.",
+						List.of(new TrainingAnalysisProvider.Target("consistencyScore", "Stability",
+								TrainingAnalysisProvider.Operator.AT_LEAST, 40, "points"))),
+				"acceptance-model", new TrainingAnalysisProvider.TokenUsage(300, 120));
+
+		assertThatThrownBy(() -> gate.validate(snapshot, result))
+				.hasMessageContaining("at most two decimal places");
+	}
+
+	@Test
+	void rejectsCareerSummaryThatRepeatsMetrics() {
+		TrainingAnalysisSnapshot snapshot = careerSnapshot();
+		TrainingAnalysisProvider.AnalysisResult result = new TrainingAnalysisProvider.AnalysisResult(
+				"Control varies more than pace", "The history contains 22 sessions with 81.6 percent accuracy.",
+				List.of(new TrainingAnalysisProvider.Finding("RHYTHM_INSTABILITY",
+						TrainingAnalysisProvider.Severity.OPPORTUNITY, "Rhythm varies too much",
+						"Consistency is 30.8.", "This makes the pace hard to repeat.")),
+				new TrainingAnalysisProvider.NextAction("Make the click rhythm repeatable",
+						"Use the same setup for 3 sessions and keep one focus.",
+						List.of(new TrainingAnalysisProvider.Target("consistencyScore", "Stability",
+								TrainingAnalysisProvider.Operator.AT_LEAST, 40, "points"))),
+				"acceptance-model", new TrainingAnalysisProvider.TokenUsage(300, 120));
+
+		assertThatThrownBy(() -> gate.validate(snapshot, result))
+				.hasMessageContaining("without a metric dump");
+	}
+
+	private static TrainingAnalysisSnapshot careerSnapshot() {
+		return new TrainingAnalysisSnapshot(1, TrainingAnalysisSnapshot.Scope.CAREER,
+				"grid-shot:all-history", "career-v1", "grid-shot", "grid-shot:all-history", 22,
+				Map.of("validSessionCount", 22d, "configurationCount", 5d,
+						"averageAccuracy", 81.6d, "recentAccuracy", 80.6d,
+						"averageTargetsPerMinute", 170.4d, "recentConsistencyScore", 30.8d),
+				List.of(new TrainingAnalysisSnapshot.Window("R1", 0, 60_000,
+						Map.of("lastPhaseAccuracy", 80.6d, "maxCombo", 57d))),
+				List.of(
+						new TrainingAnalysisSnapshot.Signal("RHYTHM_INSTABILITY",
+								TrainingAnalysisSnapshot.Severity.OPPORTUNITY,
+								Map.of("consistencyScore", 30.8d)),
+						new TrainingAnalysisSnapshot.Signal("RECENT_DECLINE",
+								TrainingAnalysisSnapshot.Severity.OPPORTUNITY,
+								Map.of("accuracyDelta", -6.8d, "consistencyScoreDelta", -9d))),
+				new TrainingAnalysisSnapshot.Comparison(6,
+						Map.of("accuracyDelta", -6.8d, "consistencyScoreDelta", -9d)),
+				new TrainingAnalysisSnapshot.Integrity(true, List.of()));
+	}
+
 	private static Stream<Arguments> groundedScenarios() {
 		return Stream.of(
 				Arguments.of("stable-high-accuracy",

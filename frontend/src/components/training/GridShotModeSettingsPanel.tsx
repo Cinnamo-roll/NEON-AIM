@@ -86,7 +86,7 @@ export function GridShotModeSettingsPanel({ settings, sessionType, onApply, onSe
           </header>
           <div className="grid-shot-session-type-options" role="group" aria-label={tx("选择训练类型", "Choose training type")}>
             <button type="button" data-session-type="benchmark" className={draftSessionType === "benchmark" ? "active" : ""} aria-pressed={draftSessionType === "benchmark"} onClick={() => selectSessionType("benchmark")}>
-              <Target size={18} /><span><b>{tx("基准训练", "Benchmark")}</b><small>{tx("固定规则 · 保留标准配置", "Fixed rules · standard setup")}</small></span>
+              <Target size={18} /><span><b>{tx("标准训练", "Standard training")}</b><small>{tx("固定规则 · 保留标准配置", "Fixed rules · standard setup")}</small></span>
             </button>
             <button type="button" data-session-type="practice" className={draftSessionType === "practice" ? "active" : ""} aria-pressed={draftSessionType === "practice"} onClick={() => selectSessionType("practice")}>
               <Settings2 size={18} /><span><b>{tx("自由练习", "Free practice")}</b><small>{tx("自定义规则 · 同样进入生涯档案", "Custom rules · also contributes to Career")}</small></span>

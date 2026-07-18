@@ -89,7 +89,7 @@ class TrainingSessionFlowTests {
 		mockMvc.perform(get("/api/training/career/grid-shot/ai-analysis")
 					.header("Authorization", "Bearer " + token))
 				.andExpect(status().isConflict())
-				.andExpect(jsonPath("$.code").value("CAREER_COMPARABLE_SAMPLE_TOO_SMALL"));
+				.andExpect(jsonPath("$.code").value("CAREER_SAMPLE_TOO_SMALL"));
 		mockMvc.perform(get("/api/training/career/grid-shot/coaching-task")
 					.header("Authorization", "Bearer " + token))
 				.andExpect(status().isForbidden());
@@ -197,6 +197,32 @@ class TrainingSessionFlowTests {
 					.header("Authorization", "Bearer " + token))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.data.totalElements").value(0));
+	}
+
+	@Test
+	void savingANewSessionInvalidatesTheCachedCareerProfile() throws Exception {
+		String token = registerAndToken("career_cache", "career-cache@example.com");
+		mockMvc.perform(post("/api/training/sessions")
+					.header("Authorization", "Bearer " + token)
+					.contentType(MediaType.APPLICATION_JSON)
+					.content(payload("career-cache-session-1", 2)))
+				.andExpect(status().isCreated());
+
+		mockMvc.perform(get("/api/training/career/grid-shot/profile")
+					.header("Authorization", "Bearer " + token))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.sample.comparableSessions").value(1));
+
+		mockMvc.perform(post("/api/training/sessions")
+					.header("Authorization", "Bearer " + token)
+					.contentType(MediaType.APPLICATION_JSON)
+					.content(payload("career-cache-session-2", 2)))
+				.andExpect(status().isCreated());
+
+		mockMvc.perform(get("/api/training/career/grid-shot/profile")
+					.header("Authorization", "Bearer " + token))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.sample.comparableSessions").value(2));
 	}
 
 	@Test

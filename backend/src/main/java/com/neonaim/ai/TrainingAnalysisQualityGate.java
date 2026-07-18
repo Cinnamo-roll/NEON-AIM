@@ -12,7 +12,10 @@ import java.util.regex.Pattern;
 final class TrainingAnalysisQualityGate {
 
 	private static final Pattern NUMBER = Pattern.compile("[-+]?\\d[\\d,]*(?:\\.\\d+)?");
+	private static final Pattern OVER_PRECISE_DECIMAL = Pattern.compile("\\d+\\.\\d{3,}");
 	private static final Pattern FINDING_CODE = Pattern.compile("[A-Z0-9_]{3,64}");
+	private static final List<String> CAREER_REPORT_JARGON = List.of(
+			"能力画像", "已确认的优势", "主要限制", "趋势含义", "下一阶段训练方案", "职业生涯共");
 	private static final List<String> UNSUPPORTED_CLAIMS = List.of(
 			"鼠标轨迹", "移动轨迹", "瞄准路径", "目标位置", "靶点位置", "反应时间",
 			"远低于目标", "初步趋势", "疲劳", "注意力分散", "注意力下降", "专注力",
@@ -48,6 +51,10 @@ final class TrainingAnalysisQualityGate {
 		assertNumericClaimsGrounded(result.headline(), evidenceValues);
 		assertNoUnsupportedClaims(result.summary());
 		assertNumericClaimsGrounded(result.summary(), evidenceValues);
+		if (snapshot.scope() == TrainingAnalysisSnapshot.Scope.CAREER) {
+			assertCareerSectionTitlesAreDistinct(result);
+			assertNaturalCareerCopy(result);
+		}
 		for (TrainingAnalysisProvider.Finding finding : result.findings()) {
 			if (finding.severity() == TrainingAnalysisProvider.Severity.POSITIVE) hasPositiveFinding = true;
 			if (!FINDING_CODE.matcher(finding.code()).matches()) {
@@ -68,6 +75,10 @@ final class TrainingAnalysisQualityGate {
 			throw new IllegalStateException("provider omitted an evidenced strength");
 		}
 		List<Double> nextActionValues = new ArrayList<>(evidenceValues);
+		if (snapshot.scope() == TrainingAnalysisSnapshot.Scope.CAREER) {
+			nextActionValues.add(3d);
+			nextActionValues.add(5d);
+		}
 		for (TrainingAnalysisProvider.Target target : result.nextAction().targets()) {
 			assertNoUnsupportedClaims(target.label());
 			strategy.validateTarget(snapshot, target);
@@ -77,6 +88,58 @@ final class TrainingAnalysisQualityGate {
 		assertNumericClaimsGrounded(result.nextAction().title(), nextActionValues);
 		assertNoUnsupportedClaims(result.nextAction().description());
 		assertNumericClaimsGrounded(result.nextAction().description(), nextActionValues);
+	}
+
+	private static void assertCareerSectionTitlesAreDistinct(
+			TrainingAnalysisProvider.AnalysisResult result) {
+		List<String> titles = new ArrayList<>();
+		titles.add(result.headline());
+		for (TrainingAnalysisProvider.Finding finding : result.findings()) {
+			titles.add(finding.title());
+		}
+		titles.add(result.nextAction().title());
+		for (int left = 0; left < titles.size(); left++) {
+			String normalizedLeft = normalizeTitle(titles.get(left));
+			for (int right = left + 1; right < titles.size(); right++) {
+				String normalizedRight = normalizeTitle(titles.get(right));
+				if (normalizedLeft.equals(normalizedRight)
+						|| (Math.min(normalizedLeft.length(), normalizedRight.length()) >= 4
+						&& (normalizedLeft.contains(normalizedRight)
+						|| normalizedRight.contains(normalizedLeft)))) {
+					throw new IllegalStateException("career analysis section titles must be distinct");
+				}
+			}
+		}
+	}
+
+	private static void assertNaturalCareerCopy(TrainingAnalysisProvider.AnalysisResult result) {
+		if (NUMBER.matcher(result.summary()).find()) {
+			throw new IllegalStateException("career summary must explain the result without a metric dump");
+		}
+		List<String> copy = new ArrayList<>();
+		copy.add(result.headline());
+		copy.add(result.summary());
+		for (TrainingAnalysisProvider.Finding finding : result.findings()) {
+			copy.add(finding.title());
+			copy.add(finding.evidence());
+			copy.add(finding.advice());
+		}
+		copy.add(result.nextAction().title());
+		copy.add(result.nextAction().description());
+		for (String value : copy) {
+			for (String jargon : CAREER_REPORT_JARGON) {
+				if (value.contains(jargon)) {
+					throw new IllegalStateException("career analysis uses internal report jargon");
+				}
+			}
+		}
+		if (result.nextAction().title().trim().endsWith("训练")) {
+			throw new IllegalStateException("career next-action title must sound like direct coaching");
+		}
+	}
+
+	private static String normalizeTitle(String value) {
+		return value.toLowerCase(Locale.ROOT).replaceAll("[\\p{P}\\p{S}\\s]+", "");
 	}
 
 	private static List<Double> evidenceValues(TrainingAnalysisSnapshot snapshot) {
@@ -125,6 +188,9 @@ final class TrainingAnalysisQualityGate {
 	}
 
 	private static void assertNoUnsupportedClaims(String value) {
+		if (OVER_PRECISE_DECIMAL.matcher(value).find()) {
+			throw new IllegalStateException("user-facing numbers must use at most two decimal places");
+		}
 		if (containsUnsupportedClaim(value)) {
 			throw new IllegalStateException("provider referenced data that was not supplied");
 		}

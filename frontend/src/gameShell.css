@@ -512,7 +512,7 @@ main.workspace-main {
 .profile-career-empty > span { display: grid; width: 58px; height: 58px; place-items: center; border: 1px solid #31515d; color: #63dfe7; transform: rotate(45deg); }
 .profile-career-empty > span svg { transform: rotate(-45deg); }
 .profile-career-empty > small { margin-top: 25px; color: #5d737c; font: 700 9px Rajdhani, sans-serif; letter-spacing: 2.2px; }
-.profile-career-empty h2 { margin: 8px 0 4px; color: #cfe0e3; font: 700 24px Rajdhani, sans-serif; }
+.profile-career-empty h2 { margin: 25px 0 4px; color: #cfe0e3; font: 700 24px Rajdhani, sans-serif; }
 .profile-career-empty p { margin: 0; color: #d4a25a; font: 700 11px Rajdhani, sans-serif; letter-spacing: 1.4px; }
 .career-summary,
 .career-history,

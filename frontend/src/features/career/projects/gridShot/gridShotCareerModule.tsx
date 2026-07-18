@@ -24,6 +24,7 @@ import {
   type TrainingCareerProfileConfidence,
 } from "../../../../game/career/trainingCareerProfileService";
 import type { GridShotTargetSize } from "../../../../game/modes/gridShot/gridShotConfig";
+import { formatGridShotConfigurationLabel } from "../../../../game/modes/gridShot/gridShotConfigurationLabel";
 import { getTrainingSessionDetail, listAllTrainingSessions } from "../../../../game/storage/trainingSessionService";
 import { GridShotCareerProfile } from "./GridShotCareerProfile";
 import { GridShotCareerSessionReview } from "./GridShotCareerSessionReview";
@@ -212,7 +213,7 @@ function contribution(dataset: CareerProjectDataset): CareerProjectContribution 
       durationMs: session.durationMs,
     })),
     abilities: abilities(projectData.profile),
-    recentSessions: sessions.slice(0, 8).map((session) => ({
+    recentSessions: sessions.map((session) => ({
       id: session.key,
       projectId: session.projectId,
       trainingId: session.trainingId,
@@ -220,8 +221,10 @@ function contribution(dataset: CareerProjectDataset): CareerProjectContribution 
       completedAt: session.completedAt,
       durationMs: session.durationMs,
       sessionType: session.sessionType,
-      context: `${Math.round(session.durationMs / 1_000)}s · ${session.configurationKey.split(":").at(-1) ?? "-"}`,
+      context: formatGridShotConfigurationLabel(session.configurationKey),
+      primaryLabel: tx("得分", "Score"),
       primaryValue: new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(Math.round(session.score)),
+      secondaryLabel: tx("准确率", "Accuracy"),
       secondaryValue: `${session.accuracy.toFixed(1)}%`,
       grade: session.grade,
     })),
@@ -255,14 +258,25 @@ async function remoteDataset(local: CareerProjectDataset, context: CareerProject
     listAllTrainingSessions("grid-shot"),
     getTrainingCareerProfile("grid-shot"),
   ]);
-  const notice = cloudResult.status === "rejected"
-    ? tx("云端记录暂时无法读取，请稍后重试。", "Cloud history is unavailable. Please try again later.")
-    : null;
+  const notices: string[] = [];
+  if (cloudResult.status === "rejected") {
+    notices.push(tx(
+      "云端训练记录加载失败，当前显示已保存的数据。请检查网络连接与后端服务后重试。",
+      "Cloud training history failed to load. Saved data is shown instead. Check the network and backend service, then try again.",
+    ));
+  }
+  if (profileResult.status === "rejected") {
+    notices.push(tx(
+      "能力档案暂时无法更新，本次训练统计可能不是最新。请稍后重试。",
+      "The capability profile could not be updated, so these statistics may be stale. Please try again.",
+    ));
+  }
+  const notice = notices.join(" ") || null;
   const projectData: GridShotCareerProjectData = {
     sessions: cloudResult.status === "fulfilled"
       ? mergeGridShotCareerSessions(cloudResult.value, [])
       : localData.sessions,
-    profile: profileResult.status === "fulfilled" ? profileResult.value : null,
+    profile: profileResult.status === "fulfilled" ? profileResult.value : localData.profile,
     notice,
   };
   return { sessions: projectData.sessions, payload: projectData, notice };
@@ -271,8 +285,8 @@ async function remoteDataset(local: CareerProjectDataset, context: CareerProject
 export const gridShotCareerModule: CareerProjectModule = {
   definition: gridShotCareerProjectDefinition,
   trainingEntries: [
-    { id: "benchmark", label: ["基准训练", "Benchmark"] },
-    { id: "practice", label: ["自由练习", "Practice"] },
+    { id: "benchmark", label: ["标准训练", "Standard training"] },
+    { id: "practice", label: ["自由练习", "Free practice"] },
   ],
   loadLocal: () => localDataset(),
   loadRemote: remoteDataset,
@@ -295,7 +309,10 @@ export const gridShotCareerModule: CareerProjectModule = {
       return {
         initialDetail: null,
         missingDetailMessage: tx("找不到这条 Grid Shot 记录。", "This Grid Shot session is unavailable."),
-        remoteErrorMessage: tx("无法读取这局训练的云端详情。", "Unable to load this session detail."),
+        remoteErrorMessage: tx(
+          "找不到这局训练的详情，记录可能已经被删除。请返回后选择其他记录。",
+          "This session detail could not be found and may have been deleted. Go back and choose another session.",
+        ),
       };
     }
     const initialDetail = localGridShotCareerDetail(gridSession, targetSize(settings));
@@ -309,7 +326,10 @@ export const gridShotCareerModule: CareerProjectModule = {
         >(gridSession.serverId).then((response) => cloudGridShotCareerDetail(gridSession, response)),
       } : {}),
       missingDetailMessage: tx("这条本地记录缺少详细事件。", "This local session has no event detail."),
-      remoteErrorMessage: tx("无法读取这局训练的云端详情。", "Unable to load this session detail."),
+      remoteErrorMessage: tx(
+        "这局训练的云端详情加载失败。请检查网络连接与后端服务后重试。",
+        "This session's cloud detail failed to load. Check the network and backend service, then try again.",
+      ),
     };
   },
   renderSessionReview: (props) => (
@@ -318,7 +338,9 @@ export const gridShotCareerModule: CareerProjectModule = {
       detail={props.detail as GridShotCareerDetail | null}
       loading={props.loading}
       error={props.error}
+      backLabel={props.backLabel}
       onBack={props.onBack}
+      onRetry={props.onRetry}
     />
   ),
 };

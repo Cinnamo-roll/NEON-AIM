@@ -1,15 +1,10 @@
 import { Activity, Crosshair, Target, Timer, Zap } from "lucide-react";
 import type { TrainingSessionReviewModel } from "../../../features/trainingReview/trainingSessionReviewModel";
-import { tx } from "../../../i18n";
+import { formatSeconds, tx } from "../../../i18n";
 import type { GridShotHistoryRecord } from "../../types/training";
 import type { GridShotAnalysisBundle } from "./gridShotAnalysisSnapshot";
 import type { GridShotTargetSize } from "./gridShotConfig";
-
-const targetSizeLabels: Record<GridShotTargetSize, readonly [string, string]> = {
-  small: ["小目标", "Small targets"],
-  medium: ["中目标", "Medium targets"],
-  large: ["大目标", "Large targets"],
-};
+import { formatGridShotTargetSizeLabel } from "./gridShotConfigurationLabel";
 
 const phaseNames: ReadonlyArray<readonly [string, string]> = [
   ["起步", "Opening"],
@@ -24,7 +19,9 @@ function maxBy<T>(items: readonly T[], value: (item: T) => number): T | undefine
 }
 
 function segmentRange(segment: { startMs: number; endMs: number } | undefined) {
-  return segment ? `${segment.startMs / 1_000}–${segment.endMs / 1_000}s` : "—";
+  return segment
+    ? `${formatSeconds(segment.startMs / 1_000)}–${formatSeconds(segment.endMs / 1_000)}`
+    : "—";
 }
 
 export function buildGridShotSessionReviewModel(
@@ -43,7 +40,7 @@ export function buildGridShotSessionReviewModel(
     (segment) => segment.misses,
   );
   const chartData = bundle.detailSegments.map((segment) => ({
-    interval: `${segment.startMs / 1_000}–${segment.endMs / 1_000}s`,
+    interval: `${formatSeconds(segment.startMs / 1_000)}–${formatSeconds(segment.endMs / 1_000)}`,
     hits: segment.hits,
     misses: segment.misses,
     accuracy: segment.hits + segment.misses >= 3 ? Number(segment.accuracy.toFixed(1)) : null,
@@ -57,10 +54,7 @@ export function buildGridShotSessionReviewModel(
     projectId: "grid-shot",
     projectLabel: "GRID SHOT",
     title: tx("本局复盘", "Session review"),
-    kicker: tx(
-      `GRID SHOT · ${record.duration} 秒 · ${tx(...targetSizeLabels[targetSize])}`,
-      `GRID SHOT · ${record.duration}s · ${tx(...targetSizeLabels[targetSize])}`,
-    ),
+    kicker: `GRID SHOT · ${formatSeconds(record.duration)} · ${formatGridShotTargetSizeLabel(targetSize)}`,
     score: record.score,
     grade: record.grade,
     metrics: [

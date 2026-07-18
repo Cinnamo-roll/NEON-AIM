@@ -16,6 +16,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
@@ -59,7 +60,9 @@ class TrainingSessionService implements TrainingSessionAnalysisOperations {
 		this.clock = clock;
 	}
 
-	CreateResult create(UUID userId, TrainingSessionSubmission submission) {
+	@CacheEvict(cacheNames = TrainingCareerProfileService.CACHE_NAME,
+			key = "#userId.toString() + ':' + #submission.trainingId()")
+	public CreateResult create(UUID userId, TrainingSessionSubmission submission) {
 		TrainingSession existing = repository.findByUserIdAndClientSessionId(userId, submission.clientSessionId())
 				.orElse(null);
 		if (existing != null) {
@@ -116,9 +119,9 @@ class TrainingSessionService implements TrainingSessionAnalysisOperations {
 	@Transactional(readOnly = true)
 	SessionPage list(UUID userId, String trainingId, int page, int size) {
 		PageRequest pageable = PageRequest.of(page, size);
-		Page<TrainingSession> result = trainingId == null || trainingId.isBlank()
-				? repository.findByUserIdOrderByCompletedAtDesc(userId, pageable)
-				: repository.findByUserIdAndTrainingIdOrderByCompletedAtDesc(userId, trainingId, pageable);
+		Page<TrainingSessionSummaryView> result = trainingId == null || trainingId.isBlank()
+				? repository.findSummariesByUserId(userId, pageable)
+				: repository.findSummariesByUserIdAndTrainingId(userId, trainingId, pageable);
 		return new SessionPage(result.getContent().stream().map(this::summary).toList(), result.getNumber(),
 				result.getSize(), result.getTotalElements(), result.getTotalPages());
 	}
@@ -289,6 +292,15 @@ class TrainingSessionService implements TrainingSessionAnalysisOperations {
 				session.durationMs(), session.score(), session.hits(), session.misses(), session.accuracy(),
 				session.targetsPerMinute(), session.averageHitInterval(), session.consistencyScore(),
 				session.maxCombo(), session.grade(), session.integrityStatus().name(), session.analysisDataVersion());
+	}
+
+	private SessionSummary summary(TrainingSessionSummaryView session) {
+		return new SessionSummary(session.id(), session.clientSessionId(), session.trainingId(), session.modeVersion(),
+				session.scoringVersion(), session.configurationKey(), session.sessionType(), session.startedAt(),
+				session.completedAt(), session.durationMs(), session.score(), session.hits(), session.misses(),
+				session.accuracy(), session.targetsPerMinute(), session.averageHitInterval(),
+				session.consistencyScore(), session.maxCombo(), session.grade(), session.integrityStatus().name(),
+				session.analysisDataVersion());
 	}
 
 	private SessionDetail detail(TrainingSession session) {

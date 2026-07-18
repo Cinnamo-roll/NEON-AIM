@@ -60,7 +60,8 @@ class TrainingCareerAiAnalysisService {
 						userId, trainingId, TrainingCareerAiAnalysisCall.Status.PENDING)
 				.orElse(null);
 		if (pending != null && !isStale(pending)
-				&& pending.dataVersion().equals(context.snapshot().dataVersion())) {
+				&& pending.dataVersion().equals(context.snapshot().dataVersion())
+				&& prompt.promptVersion().equals(pending.promptVersion())) {
 			return view(pending, null, false);
 		}
 		if (pending != null) {
@@ -87,7 +88,9 @@ class TrainingCareerAiAnalysisService {
 	}
 
 	JobView latest(UUID userId, String trainingId) {
-		strategyRegistry.require(trainingId);
+		TrainingAiAnalysisStrategy strategy = strategyRegistry.require(trainingId);
+		TrainingAiAnalysisStrategy.PromptSpec prompt = strategy.prompt(
+				com.neonaim.training.api.TrainingAnalysisSnapshot.Scope.CAREER);
 		TrainingCareerAnalysisOperations.CareerContext context =
 				trainingOperations.loadCareerAnalysisContext(userId, trainingId);
 		TrainingCareerAiAnalysisCall latest = callRepository
@@ -100,7 +103,8 @@ class TrainingCareerAiAnalysisService {
 			latest.fail("AI_JOB_INTERRUPTED", "AI 综合分析已中断，请重新生成", clock.instant());
 			callRepository.save(latest);
 		}
-		boolean stale = !latest.dataVersion().equals(context.snapshot().dataVersion());
+		boolean stale = !latest.dataVersion().equals(context.snapshot().dataVersion())
+				|| !prompt.promptVersion().equals(latest.promptVersion());
 		return view(latest, readResult(latest.resultJson()), stale);
 	}
 

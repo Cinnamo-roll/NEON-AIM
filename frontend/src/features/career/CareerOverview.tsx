@@ -1,13 +1,9 @@
-import {
-  Activity,
-  Bot,
-  ChevronRight,
-  Clock3,
-  History,
-  Send,
-} from "lucide-react";
+import { useState } from "react";
+import { Activity, ChevronLeft, ChevronRight, History } from "lucide-react";
 import { getAppLanguage, tx } from "../../i18n";
+import { CareerDataStatus } from "./CareerDataStatus";
 import type { CareerOverviewModel } from "./careerOverviewModel";
+import { CAREER_OVERVIEW_PAGE_SIZE, getCareerOverviewPaginationItems } from "./careerOverviewPagination";
 
 interface CareerOverviewProps {
   model: CareerOverviewModel;
@@ -15,13 +11,8 @@ interface CareerOverviewProps {
   notice: string | null;
   onBrowseTraining: () => void;
   onOpenSession: (projectId: string, sessionId: string) => void;
+  onRetry: () => void;
 }
-
-const AI_CHAT_PROMPTS = [
-  ["我最近进步了吗？", "Am I improving recently?"],
-  ["现在最该练什么？", "What should I train next?"],
-  ["哪些能力还不稳定？", "Which skills are still inconsistent?"],
-] as const;
 
 function formatDuration(durationMs: number) {
   const totalMinutes = Math.round(durationMs / 60_000);
@@ -29,19 +20,24 @@ function formatDuration(durationMs: number) {
   const hours = Math.floor(totalMinutes / 60);
   const minutes = totalMinutes % 60;
   return minutes
-    ? tx(`${hours} 小时 ${minutes} 分`, `${hours}h ${minutes}m`)
+    ? tx(`${hours} 小时 ${minutes} 分钟`, `${hours}h ${minutes}m`)
     : tx(`${hours} 小时`, `${hours}h`);
 }
 
-function formatDate(value: string) {
+function formatSessionTime(value: string) {
   const date = new Date(value);
-  if (!Number.isFinite(date.getTime())) return "-";
-  return new Intl.DateTimeFormat(getAppLanguage(), {
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(date);
+  if (!Number.isFinite(date.getTime())) return { date: "-", time: "-" };
+  const locale = getAppLanguage();
+  return {
+    date: new Intl.DateTimeFormat(locale, {
+      month: "2-digit",
+      day: "2-digit",
+    }).format(date),
+    time: new Intl.DateTimeFormat(locale, {
+      hour: "2-digit",
+      minute: "2-digit",
+    }).format(date),
+  };
 }
 
 export function CareerOverview({
@@ -50,83 +46,169 @@ export function CareerOverview({
   notice,
   onBrowseTraining,
   onOpenSession,
+  onRetry,
 }: CareerOverviewProps) {
-  const recentSessions = model.recentSessions.slice(0, 5);
+  const [page, setPage] = useState(0);
+  const totalPages = Math.max(1, Math.ceil(model.recentSessions.length / CAREER_OVERVIEW_PAGE_SIZE));
+  const currentPage = Math.min(page, totalPages - 1);
+  const recentSessions = model.recentSessions.slice(
+    currentPage * CAREER_OVERVIEW_PAGE_SIZE,
+    (currentPage + 1) * CAREER_OVERVIEW_PAGE_SIZE,
+  );
+  const paginationItems = getCareerOverviewPaginationItems(currentPage, totalPages);
+  const hasSavedData = model.totalSessions > 0;
 
   return (
     <main className="workspace-main career-platform-overview career-dashboard career-overview-simple">
-      <header className="career-dashboard-header career-overview-header">
-        <div className="career-dashboard-title">
+      <header className="career-primary-header career-dashboard-header career-overview-header">
+        <div className="career-primary-header-content career-dashboard-title">
           <h1>{tx("生涯总览", "Career overview")}</h1>
         </div>
-        <small className="career-overview-updated">
-          <Clock3 size={13} />
-          {model.updatedAt
-            ? `${tx("最近更新", "Updated")} ${formatDate(model.updatedAt)}`
-            : tx("等待第一局训练", "Waiting for the first session")}
-        </small>
       </header>
 
-      <section className="career-overview-key-metrics" aria-label={tx("训练概况", "Training summary")}>
-        <div><small>{tx("累计训练", "TOTAL SESSIONS")}</small><strong>{model.totalSessions}<em>{tx("次", "sessions")}</em></strong></div>
-        <div><small>{tx("累计时长", "TOTAL TIME")}</small><strong>{formatDuration(model.totalDurationMs)}</strong></div>
-        <div><small>{tx("本周训练", "THIS WEEK")}</small><strong>{model.weeklySessions}<em>{tx("次", "sessions")}</em></strong></div>
-        <div><small>{tx("本周时长", "WEEKLY TIME")}</small><strong>{formatDuration(model.weeklyDurationMs)}</strong></div>
+      <section className="career-overview-core-metrics" aria-label={tx("训练核心指标", "Core training metrics")}>
+        <article>
+          <small>{tx("累计训练", "Total sessions")}</small>
+          <strong>{model.totalSessions}<em>{tx("局", "sessions")}</em></strong>
+        </article>
+        <article>
+          <small>{tx("累计时长", "Total time")}</small>
+          <strong>{formatDuration(model.totalDurationMs)}</strong>
+        </article>
+        <article data-period="recent">
+          <small>{tx("近 7 天训练", "Sessions in the last 7 days")}</small>
+          <strong>{model.weeklySessions}<em>{tx("局", "sessions")}</em></strong>
+        </article>
+        <article data-period="recent">
+          <small>{tx("近 7 天时长", "Time in the last 7 days")}</small>
+          <strong>{formatDuration(model.weeklyDurationMs)}</strong>
+        </article>
       </section>
 
-      {notice && <div className="career-dashboard-notice">{notice}</div>}
+      {loading && (
+        <CareerDataStatus
+          tone="loading"
+          title={tx("正在同步生涯数据", "Syncing Career data")}
+          message={hasSavedData
+            ? tx("正在检查云端更新；当前已保存的数据仍可正常查看。", "Checking for cloud updates. Saved data remains available while syncing.")
+            : tx("正在读取训练记录与能力档案，请稍候。", "Loading training history and the capability profile.")}
+          compact
+        />
+      )}
+      {notice && (
+        <CareerDataStatus
+          tone={hasSavedData ? "warning" : "error"}
+          title={hasSavedData ? tx("部分生涯数据未更新", "Some Career data is out of date") : tx("生涯数据加载失败", "Career data failed to load")}
+          message={notice}
+          actionLabel={tx("重新加载", "Try again")}
+          onAction={onRetry}
+          compact
+        />
+      )}
 
-      <div className="career-overview-focus-grid">
-        <section className="career-overview-panel career-overview-recent-panel">
-          <header className="career-overview-simple-heading">
-            <span><History size={16} /><h2>{tx("最近训练", "Recent training")}</h2></span>
-            <small>{loading ? tx("正在同步", "Syncing") : tx("点击记录打开历史训练复盘", "Open a historical session review")}</small>
-          </header>
-          {recentSessions.length ? (
-            <div className="career-overview-recent-list">
-              {recentSessions.map((session) => (
-                <button type="button" key={`${session.projectId}:${session.id}`} onClick={() => onOpenSession(session.projectId, session.id)}>
-                  <time dateTime={session.completedAt}>{formatDate(session.completedAt)}</time>
-                  <span><strong>{session.projectName}</strong><small>{session.context}</small></span>
-                  <span><b>{session.primaryValue}</b><small>{session.secondaryValue}</small></span>
-                  <em data-grade={session.grade}>{session.grade}</em>
-                  <ChevronRight size={15} />
-                </button>
-              ))}
-            </div>
-          ) : (
-            <div className="career-overview-compact-empty">
-              <Activity size={22} />
-              <div>
-                <strong>{loading ? tx("正在同步训练记录", "Syncing training history") : tx("还没有训练记录", "No sessions yet")}</strong>
-                <small>{tx("完成第一局后，可从这里打开对应的历史复盘。", "Complete a session to open its historical review here.")}</small>
-              </div>
-              {!loading && <button type="button" onClick={onBrowseTraining}>{tx("选择训练", "Choose training")}</button>}
-            </div>
-          )}
-        </section>
+      <section className="career-overview-history" aria-label={tx("最近训练", "Recent training")}>
+        <header className="career-overview-history-heading">
+          <span className="career-overview-history-title">
+            <i><History size={19} /></i>
+            <h2>{tx("最近训练", "Recent training")}</h2>
+          </span>
+        </header>
 
-        <section className="career-overview-ai-chat" aria-label={tx("AI 对话", "AI chat")}>
-          <header>
-            <span><Bot size={17} /></span>
-            <div><small>{tx("AI 对话", "AI CHAT")}</small><h2>{tx("与你的生涯数据对话", "Talk with your Career data")}</h2></div>
-            <em>{tx("会员功能 · 未来开发", "MEMBER FEATURE · COMING LATER")}</em>
-          </header>
-          <div className="career-overview-ai-body">
-            <p>{tx(
-              "未来，AI 可以结合你的全部训练记录、能力档案和长期变化，回答进步、短板与下一步训练问题。",
-              "AI will use your full training history, capability profile, and long-term changes to answer questions about progress, weaknesses, and what to train next.",
-            )}</p>
-            <div>
-              {AI_CHAT_PROMPTS.map((prompt) => <button type="button" key={prompt[0]} disabled>{tx(prompt[0], prompt[1])}</button>)}
+        {recentSessions.length ? (
+          <>
+            <div className="career-overview-session-list">
+              {recentSessions.map((session) => {
+                const completedAt = formatSessionTime(session.completedAt);
+                return (
+                  <button
+                    type="button"
+                    className="career-overview-session"
+                    key={`${session.projectId}:${session.id}`}
+                    onClick={() => onOpenSession(session.projectId, session.id)}
+                    aria-label={tx(`打开 ${session.projectName} 单局分析`, `Open ${session.projectName} session analysis`)}
+                  >
+                    <time dateTime={session.completedAt}>
+                      <b>{completedAt.date}</b>
+                      <small>{completedAt.time}</small>
+                    </time>
+
+                    <span className="career-overview-session-main">
+                      <span>
+                        <strong>{session.projectName}</strong>
+                        <em>{session.sessionType === "benchmark" ? tx("标准训练", "Standard training") : tx("自由练习", "Free practice")}</em>
+                      </span>
+                      <small>{session.context}</small>
+                    </span>
+
+                    <span className="career-overview-session-metrics">
+                      <span><small>{session.primaryLabel}</small><b>{session.primaryValue}</b></span>
+                      <span><small>{session.secondaryLabel}</small><b>{session.secondaryValue}</b></span>
+                    </span>
+
+                    <em className="career-overview-session-grade" data-grade={session.grade}>{session.grade}</em>
+                    <span className="career-overview-session-action">
+                      <ChevronRight size={18} />
+                    </span>
+                  </button>
+                );
+              })}
             </div>
+            {totalPages > 1 && (
+              <nav className="career-overview-pagination" aria-label={tx("最近训练分页", "Recent training pages")}>
+                <div className="career-overview-pagination-controls">
+                  <button
+                    type="button"
+                    disabled={currentPage === 0}
+                    aria-label={tx("上一页", "Previous page")}
+                    onClick={() => setPage(Math.max(0, currentPage - 1))}
+                  >
+                    <ChevronLeft size={16} />
+                  </button>
+                  <div className="career-overview-page-numbers">
+                    {paginationItems.map((item) => typeof item === "number" ? (
+                      <button
+                        type="button"
+                        key={item}
+                        className={item === currentPage ? "active" : undefined}
+                        aria-current={item === currentPage ? "page" : undefined}
+                        aria-label={tx(`第 ${item + 1} 页`, `Page ${item + 1}`)}
+                        onClick={() => setPage(item)}
+                      >
+                        {item + 1}
+                      </button>
+                    ) : (
+                      <span key={item} aria-hidden="true">…</span>
+                    ))}
+                  </div>
+                  <button
+                    type="button"
+                    disabled={currentPage === totalPages - 1}
+                    aria-label={tx("下一页", "Next page")}
+                    onClick={() => setPage(Math.min(totalPages - 1, currentPage + 1))}
+                  >
+                    <ChevronRight size={16} />
+                  </button>
+                </div>
+              </nav>
+            )}
+          </>
+        ) : loading ? (
+          <div className="career-overview-session-skeleton" aria-hidden="true">
+            {Array.from({ length: 3 }, (_, index) => <span key={index}><i /><i /><i /><i /></span>)}
           </div>
-          <footer>
-            <span>{tx("未来可直接询问你的生涯数据", "Ask about your Career data here in the future")}</span>
-            <button type="button" disabled aria-label={tx("发送", "Send")}><Send size={15} /></button>
-          </footer>
-        </section>
-      </div>
+        ) : (
+          <div className="career-overview-compact-empty">
+            <Activity size={24} />
+            <div>
+              <strong>{hasSavedData ? tx("最近 7 天没有训练记录", "No sessions in the last 7 days") : tx("还没有训练记录", "No sessions yet")}</strong>
+              <small>{hasSavedData
+                ? tx("更早的记录仍保留在对应项目档案中。完成新训练后会显示在这里。", "Older sessions remain in their project profiles. New sessions will appear here.")
+                : tx("完成第一局后，可以从这里打开对应的单局分析。", "Complete a session to open its analysis here.")}</small>
+            </div>
+            <button type="button" onClick={onBrowseTraining}>{tx("选择训练", "Choose training")}</button>
+          </div>
+        )}
+      </section>
     </main>
   );
 }

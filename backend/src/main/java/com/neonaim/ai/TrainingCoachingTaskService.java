@@ -59,7 +59,7 @@ class TrainingCoachingTaskService implements TrainingCoachingTaskOperations {
 		}
 		if (!policy.supportsAnalysisSource(call)) {
 			throw new ApiException(HttpStatus.CONFLICT, "CAREER_ANALYSIS_NOT_COMPARABLE",
-					"请先用基准训练记录生成综合分析");
+					"请先用标准训练记录生成综合分析");
 		}
 		TrainingAnalysisResult analysis = readAnalysis(call.resultJson());
 		if (analysis.source() != TrainingAnalysisResult.Source.AI

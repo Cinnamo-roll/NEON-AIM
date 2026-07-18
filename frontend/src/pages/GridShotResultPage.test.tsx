@@ -47,7 +47,7 @@ describe("GridShotResultPage persistence state", () => {
     expect(html).not.toMatch(/<h1[^>]*>本局复盘<\/h1>|<h1[^>]*>Session review<\/h1>/);
     expect(html).toMatch(/data-session-type="benchmark">GRID SHOT<\/h1>/);
     expect(html).not.toMatch(/GRID SHOT · 60/);
-    expect(html).toMatch(/基准训练|Benchmark training/);
+    expect(html).toMatch(/标准训练|Standard training/);
   });
 
   it("keeps saved status quiet and shows the full configuration for free practice", () => {
@@ -67,7 +67,7 @@ describe("GridShotResultPage persistence state", () => {
 
     expect(html).toMatch(/data-session-type="practice">GRID SHOT<\/h1>/);
     expect(html).toMatch(/result-session-config">GRID SHOT · 60 秒 · 中目标|result-session-config">GRID SHOT · 60s · Medium targets/);
-    expect(html).toMatch(/自定义训练|Custom training/);
+    expect(html).toMatch(/自由练习|Free practice/);
     expect(html).not.toMatch(/已保存到生涯|Saved to career/);
     expect(html).not.toMatch(/本局尚未保存|This session is not saved/);
     expect(html).toContain("dateTime=");

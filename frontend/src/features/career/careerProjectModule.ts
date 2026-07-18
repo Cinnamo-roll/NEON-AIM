@@ -87,7 +87,9 @@ export interface CareerSessionReviewRenderProps {
   detail: unknown | null;
   loading: boolean;
   error: string | null;
+  backLabel: readonly [zh: string, en: string];
   onBack: () => void;
+  onRetry?: () => void;
 }
 
 export interface CareerProjectModule {

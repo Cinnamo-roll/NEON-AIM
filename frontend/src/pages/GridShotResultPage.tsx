@@ -267,7 +267,7 @@ export function GridShotResultPage({
                   <div className="result-session-meta-row">
                     <span className="result-benchmark-status" data-session-type={resultSessionType}>
                       {benchmarkResult ? <Target /> : <Settings2 />}
-                      {benchmarkResult ? tx("基准训练", "Benchmark training") : tx("自定义训练", "Custom training")}
+                      {benchmarkResult ? tx("标准训练", "Standard training") : tx("自由练习", "Free practice")}
                     </span>
                     {!benchmarkResult && <span className="result-session-config">{reviewModel.kicker}</span>}
                     {saveStatus === "login-required" && <p className="result-save-status" data-state={saveStatus}>{tx("登录即可保存数据", "Sign in to save your data")}</p>}

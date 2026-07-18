@@ -72,7 +72,7 @@ class GridShotTrainingSessionValidator implements TrainingSessionValidator {
 				&& configuration.path("duration").asInt() == 60
 				&& "medium".equals(configuration.path("targetSize").asString())
 				&& configuration.path("activeTargetCount").asInt() == 3;
-		if (!valid) throw invalid("TRAINING_BENCHMARK_CONFIGURATION_INVALID", "基准训练必须使用固定规则");
+		if (!valid) throw invalid("TRAINING_BENCHMARK_CONFIGURATION_INVALID", "标准训练必须使用固定规则");
 	}
 
 	private void validateDetail(TrainingSessionSubmission submission) {

@@ -1,6 +1,6 @@
 import { useMemo, useState, type CSSProperties } from "react";
 import { ChevronRight, Search } from "lucide-react";
-import { tx } from "../../i18n";
+import { getAppLanguage, tx } from "../../i18n";
 import {
   getTrainingDifficultyLabel,
   trainingCatalogEntries,
@@ -13,11 +13,15 @@ import {
   type CareerDirectoryProject,
 } from "./careerProjectDirectoryFilter";
 import type { CareerOverviewProject } from "./careerOverviewModel";
+import { CareerDataStatus } from "./CareerDataStatus";
 
 interface CareerProjectDirectoryProps {
   projects: CareerOverviewProject[];
   onOpenProject: (projectId: string) => void;
   catalogEntries?: readonly TrainingCatalogEntry[];
+  loading?: boolean;
+  notice?: string | null;
+  onRetry?: () => void;
 }
 
 function ProjectCardContent({ item }: { item: CareerDirectoryProject }) {
@@ -48,11 +52,18 @@ export function CareerProjectDirectory({
   projects,
   onOpenProject,
   catalogEntries = trainingCatalogEntries,
+  loading = false,
+  notice = null,
+  onRetry,
 }: CareerProjectDirectoryProps) {
   const [query, setQuery] = useState("");
+  const language = getAppLanguage();
   const directoryProjects = useMemo(
-    () => buildCareerDirectoryProjects(projects, catalogEntries),
-    [catalogEntries, projects],
+    () => {
+      void language; // Rebuild copy when the interface language changes.
+      return buildCareerDirectoryProjects(projects, catalogEntries);
+    },
+    [catalogEntries, language, projects],
   );
   const visibleProjects = useMemo(
     () => filterCareerDirectoryProjects(directoryProjects, query),
@@ -65,14 +76,33 @@ export function CareerProjectDirectory({
 
   return (
     <main className="workspace-main career-directory">
-      <header className="career-directory-header">
-        <div className="career-directory-heading">
+      <header className="career-primary-header career-directory-header">
+        <div className="career-primary-header-content career-directory-heading">
           <h1>{tx("训练项目档案", "Training project profiles")}</h1>
         </div>
       </header>
 
+      {loading && (
+        <CareerDataStatus
+          tone="loading"
+          title={tx("正在更新项目档案", "Updating project profiles")}
+          message={tx("项目目录可以浏览，训练统计会在同步完成后自动更新。", "The directory remains available and training statistics will update after syncing.")}
+          compact
+        />
+      )}
+      {notice && (
+        <CareerDataStatus
+          tone="warning"
+          title={tx("部分项目数据未更新", "Some project data is out of date")}
+          message={notice}
+          actionLabel={onRetry ? tx("重新加载", "Try again") : undefined}
+          onAction={onRetry}
+          compact
+        />
+      )}
+
       <div className="career-directory-result-heading">
-        <span><small>{tx("项目目录", "PROJECT DIRECTORY")}</small><b>{query ? tx(`找到 ${visibleProjects.length} 个项目`, `${visibleProjects.length} projects found`) : tx(`共 ${visibleProjects.length} 个项目`, `${visibleProjects.length} projects`)}</b></span>
+        <span><b>{query ? tx(`找到 ${visibleProjects.length} 个项目`, `${visibleProjects.length} projects found`) : tx(`共 ${visibleProjects.length} 个项目`, `${visibleProjects.length} projects`)}</b></span>
         <label className="career-directory-search">
           <Search size={15} />
           <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={tx("搜索训练项目", "Search training projects")} aria-label={tx("搜索训练项目", "Search training projects")} />
@@ -85,7 +115,7 @@ export function CareerProjectDirectory({
           <section className="career-directory-group" key={group.id} style={{ "--difficulty-color": group.color } as CSSProperties}>
             <header>
               <span className="career-directory-difficulty-code">{group.code}</span>
-              <span><small>{group.eyebrow}</small><b>{getTrainingDifficultyLabel(group.id)}{tx("训练", " drills")}</b></span>
+              <span><b>{getTrainingDifficultyLabel(group.id)}{tx("训练", " drills")}</b></span>
               <em>{tx(`${group.projects.length} 个项目`, `${group.projects.length} projects`)}</em>
             </header>
             <div className="career-directory-grid">

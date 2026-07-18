@@ -71,7 +71,9 @@ const fakeContribution: CareerProjectContribution = {
     durationMs: 30_000,
     sessionType: "practice",
     context: "Practice · 30s",
+    primaryLabel: "主指标",
     primaryValue: "12",
+    secondaryLabel: "辅助指标",
     secondaryValue: "-",
     grade: "A",
   }],
@@ -141,6 +143,7 @@ describe("career project module architecture", () => {
     expect(registry.listModules().map((module) => module.definition.id)).toEqual(["grid-shot", "fake-project"]);
     expect(gridShotCareerModule.trainingEntries.some((entry) => entry.id === "benchmark")).toBe(true);
     expect(gridShotCareerModule.definition.benchmark.configurationKey).toBe("grid-shot:60s:medium");
+    expect(directory).toContain("career-primary-header");
     expect(directory).toContain("测试项目");
     expect(directory).not.toContain("Browse core data from foundation to elite.");
     expect(renderToStaticMarkup(registry.getModule("fake-project")!.renderProfile({} as never))).toContain("FAKE PROJECT PROFILE");
@@ -243,6 +246,25 @@ describe("career project module architecture", () => {
     expect(aggregateCareerOverview([contribution]).trendLabels).toEqual(contribution.trendLabels);
   });
 
+  it("keeps every session from the last seven days and excludes older records", () => {
+    const now = Date.parse("2026-07-16T12:00:00.000Z");
+    const recentSessions = Array.from({ length: 11 }, (_, index) => ({
+      ...fakeContribution.recentSessions[0],
+      id: `recent-${index}`,
+      completedAt: new Date(now - index * 60 * 60 * 1_000).toISOString(),
+    }));
+    recentSessions.push({
+      ...fakeContribution.recentSessions[0],
+      id: "older-than-seven-days",
+      completedAt: new Date(now - 8 * 24 * 60 * 60 * 1_000).toISOString(),
+    });
+
+    const overview = aggregateCareerOverview([{ ...fakeContribution, recentSessions }], now);
+
+    expect(overview.recentSessions).toHaveLength(11);
+    expect(overview.recentSessions.map((session) => session.id)).not.toContain("older-than-seven-days");
+  });
+
   it("does not route an unknown project to Grid Shot", () => {
     const registry = new CareerProjectRegistry([gridShotCareerModule, fakeModule]);
     expect(registry.getModule("unknown-project")).toBeUndefined();
@@ -266,9 +288,12 @@ describe("career project module architecture", () => {
       detail: null,
       loading: false,
       error: null,
+      backLabel: ["返回", "Back"],
       onBack: () => undefined,
+      onRetry: () => undefined,
     }));
 
     expect(review).toContain("GRID SHOT");
+    expect(review).toContain("返回");
   });
 });

@@ -14,6 +14,10 @@ export function tx(chinese: string, english: string) {
   return activeLanguage === "en-US" ? english : chinese;
 }
 
+export function formatSeconds(seconds: number) {
+  return tx(`${seconds} 秒`, `${seconds}s`);
+}
+
 export function isEnglish() {
   return activeLanguage === "en-US";
 }
