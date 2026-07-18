@@ -21,13 +21,13 @@ public class SystemController {
 		return ApiResponse.success(List.of(
 				new ModuleDescriptor("auth", "认证与权限", "active"),
 				new ModuleDescriptor("user", "用户与档案", "active"),
-				new ModuleDescriptor("training", "训练与成绩", "planned"),
+				new ModuleDescriptor("training", "训练与成绩", "active"),
 				new ModuleDescriptor("analytics", "长期统计", "planned"),
 				new ModuleDescriptor("leaderboard", "排行榜", "planned"),
 				new ModuleDescriptor("achievement", "成就系统", "planned"),
 				new ModuleDescriptor("task", "训练任务", "planned"),
-				new ModuleDescriptor("ai", "AI 训练分析", "planned")),
-				"用户与认证模块已开放，其余功能仍在准备中");
+				new ModuleDescriptor("ai", "AI 训练分析", "active")),
+				"认证、用户、训练与 AI 分析模块已开放，其余功能仍在准备中");
 	}
 
 	public record ModuleDescriptor(String id, String name, String status) {

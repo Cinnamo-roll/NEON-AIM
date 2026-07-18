@@ -106,7 +106,9 @@ function gridContribution(): CareerProjectContribution {
       summary: "Grid Shot summary",
       trend: "stable",
       coreMetrics: [
-        { code: "accuracy", label: "平均准确率", value: "90.0%" },
+        { code: "totalSessions", label: "累计训练", value: "2 局" },
+        { code: "totalDuration", label: "累计时长", value: "2 分钟" },
+        { code: "standardBestScore", label: "标准训练最高分", value: "23,950" },
       ],
     },
     updatedAt: "2026-07-15T09:00:00.000Z",
@@ -188,8 +190,72 @@ describe("career project module architecture", () => {
     expect(directory.match(/class="career-project-card is-pending"/g)).toHaveLength(30);
     expect(directory.match(/class="career-directory-group"/g)).toHaveLength(4);
     expect(directory.match(/class="career-project-core-data"/g)).toHaveLength(1);
-    expect(directory).toContain("90.0%");
+    expect(directory).toContain("累计训练");
+    expect(directory).toContain("累计时长");
+    expect(directory).toContain("标准训练最高分");
     expect(directory).toMatch(/career-directory-result-heading[\s\S]*career-directory-search/);
+  });
+
+  it("uses participation, time, and the valid standard-training best on the Grid Shot directory card", () => {
+    const createSession = (
+      key: string,
+      sessionType: GridShotCareerSession["sessionType"],
+      score: number,
+      durationMs: number,
+    ): GridShotCareerSession => ({
+      key,
+      projectId: "grid-shot",
+      trainingId: "grid-shot",
+      source: "cloud",
+      clientSessionId: key,
+      completedAt: "2026-07-15T09:00:00.000Z",
+      startedAt: "2026-07-15T08:59:00.000Z",
+      durationMs,
+      score,
+      hits: 100,
+      misses: 10,
+      accuracy: 90,
+      targetsPerMinute: 170,
+      averageHitInterval: 350,
+      consistencyScore: 80,
+      maxCombo: 40,
+      grade: "A",
+      integrityStatus: "VALID",
+      modeVersion: 1,
+      scoringVersion: 1,
+      configurationKey: sessionType === "benchmark" ? "grid-shot:60s:medium" : "grid-shot:30s:large",
+      sessionType,
+    });
+    const sessions = [
+      createSession("standard", "benchmark", 18_500, 60_000),
+      createSession("practice", "practice", 50_000, 30_000),
+      {
+        ...createSession("invalid-standard", "benchmark", 99_999, 60_000),
+        integrityStatus: "INVALID" as const,
+      },
+    ];
+    const contribution = gridShotCareerModule.buildContribution({
+      sessions,
+      payload: { sessions, profile: null, notice: null },
+      notice: null,
+    });
+
+    expect(contribution.project.coreMetrics).toEqual([
+      { code: "totalSessions", label: "累计训练", value: "3 局" },
+      { code: "totalDuration", label: "累计时长", value: "3 分钟" },
+      { code: "standardBestScore", label: "标准训练最高分", value: "18,500" },
+    ]);
+
+    const practiceOnly = [createSession("practice-only", "practice", 50_000, 30_000)];
+    expect(gridShotCareerModule.buildContribution({
+      sessions: practiceOnly,
+      payload: { sessions: practiceOnly, profile: null, notice: null },
+      notice: null,
+    }).project.coreMetrics[2]).toEqual({
+      code: "standardBestScore",
+      label: "标准训练最高分",
+      value: "—",
+    });
   });
 
   it("adapts project card metrics up to four cells and summarizes additional metrics", () => {

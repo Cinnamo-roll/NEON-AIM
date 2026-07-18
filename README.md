@@ -1,6 +1,8 @@
 # NEON AIM
 
-NEON AIM 是面向桌面浏览器的高刷新率 FPS 瞄准训练项目。当前正式训练模式为 Grid Shot，其余训练、云端用户体系和 AI 训练分析会按模块逐步开放。
+NEON AIM 是面向桌面浏览器的高刷新率 FPS 瞄准训练项目。当前正式训练模式为 GRID SHOT，已实现账户、服务端训练记录、生涯档案、单局复盘和可配置的 AI 训练分析，其余训练项目将按模块逐步开放。
+
+完整的产品目标、功能现状、指标口径、系统架构、开发方式与已知限制见 [`PRODUCT.md`](PRODUCT.md)。
 
 ## 项目结构
 
@@ -12,7 +14,7 @@ NEON-AIM/
 
 ## 环境要求
 
-- Node.js 20 或更高版本
+- Node.js 20.19 或更高的 Node 20 版本，或 Node.js 22.12 及以上
 - Java 21
 - 不需要全局安装 Gradle，仓库自带 Gradle Wrapper
 
@@ -24,7 +26,9 @@ npm ci
 npm run dev
 ```
 
-前端默认地址：`http://127.0.0.1:5173`
+Vite 通常使用 `http://localhost:5173`；端口被占用时可能变化，最终地址以终端输出为准。
+
+Windows PowerShell 如果提示禁止运行 `npm.ps1`，请改用 `npm.cmd ci` 和 `npm.cmd run dev`，无需修改系统的全局执行策略。
 
 ## 启动后端
 
@@ -74,16 +78,9 @@ macOS / Linux 将 `.\gradlew.bat` 替换为 `./gradlew`。
 
 ## 后端边界
 
-后端采用 Spring Modulith 管理模块边界，当前预留：
+后端采用 Spring Modulith 管理模块边界，当前状态如下：
 
-- `auth`：认证与权限
-- `user`：用户与档案
-- `training`：训练与成绩
-- `analytics`：长期统计
-- `leaderboard`：排行榜
-- `achievement`：成就系统
-- `task`：训练任务
-- `ai`：AI 训练分析
-- `system`：健康检查与系统能力
+- 已实现：`auth`（认证与权限）、`user`（用户与档案）、`training`（训练与成绩）、`ai`（AI 训练分析）、`common`（响应与错误）、`system`（健康检查）。
+- 领域骨架：`analytics`（长期统计）、`leaderboard`（排行榜）、`achievement`（成就系统）、`task`（通用训练任务）。
 
 AI 模块通过供应商无关的 `TrainingAnalysisProvider` 接口接入模型，领域代码不会直接依赖特定 AI SDK。

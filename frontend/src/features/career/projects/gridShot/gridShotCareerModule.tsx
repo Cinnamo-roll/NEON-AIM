@@ -177,11 +177,32 @@ function projectInsight(overview: ReturnType<typeof summarizeGridShotCareer>) {
   };
 }
 
+const wholeNumber = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
+
+function formatTrainingDuration(durationMs: number) {
+  const totalMinutes = Math.round(Math.max(0, durationMs) / 60_000);
+  if (totalMinutes < 60) return tx(`${totalMinutes} 分钟`, `${totalMinutes} min`);
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return minutes
+    ? tx(`${hours} 小时 ${minutes} 分钟`, `${hours}h ${minutes}m`)
+    : tx(`${hours} 小时`, `${hours}h`);
+}
+
+function bestStandardScore(sessions: readonly GridShotCareerSession[]) {
+  const scores = sessions
+    .filter((session) => session.integrityStatus === "VALID" && session.sessionType === "benchmark")
+    .map((session) => session.score)
+    .filter(Number.isFinite);
+  return scores.length ? Math.max(...scores) : null;
+}
+
 function contribution(dataset: CareerProjectDataset): CareerProjectContribution {
   const projectData = data(dataset);
   const sessions = projectData.sessions;
   const allOverview = summarizeGridShotCareer(sessions);
   const cohortOverview = summarizeGridShotCareer(comparableSessions(sessions));
+  const standardBestScore = bestStandardScore(sessions);
   const trend = cohortOverview.recentScoreDeltaPercent === null
     ? "observing"
     : cohortOverview.recentScoreDeltaPercent > 2 ? "improving" : cohortOverview.recentScoreDeltaPercent < -2 ? "declining" : "stable";
@@ -199,10 +220,14 @@ function contribution(dataset: CareerProjectDataset): CareerProjectContribution 
         )
         : tx("等待第一局有效训练记录", "Awaiting the first valid session"),
       trend,
-      coreMetrics: allOverview.validSessions ? [
-        { code: "accuracy", label: tx("平均准确率", "Average accuracy"), value: `${allOverview.averageAccuracy.toFixed(1)}%` },
-        { code: "targetsPerMinute", label: tx("平均目标速度", "Average target pace"), value: `${allOverview.averageTargetsPerMinute.toFixed(1)} TPM` },
-        { code: "consistencyScore", label: tx("平均节奏稳定", "Average rhythm stability"), value: `${allOverview.averageConsistencyScore.toFixed(0)} / 100` },
+      coreMetrics: sessions.length ? [
+        { code: "totalSessions", label: tx("累计训练", "Total sessions"), value: tx(`${sessions.length} 局`, `${sessions.length} sessions`) },
+        { code: "totalDuration", label: tx("累计时长", "Total time"), value: formatTrainingDuration(allOverview.totalDurationMs) },
+        {
+          code: "standardBestScore",
+          label: tx("标准训练最高分", "Standard best score"),
+          value: standardBestScore === null ? "—" : wholeNumber.format(Math.round(standardBestScore)),
+        },
       ] : [],
     },
     updatedAt: sessions[0]?.completedAt ?? null,

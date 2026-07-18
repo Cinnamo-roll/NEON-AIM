@@ -27,12 +27,15 @@ class SystemControllerTests {
 	}
 
 	@Test
-	void moduleEndpointListsPlannedBoundaries() throws Exception {
+	void moduleEndpointReflectsImplementedAndPlannedBoundaries() throws Exception {
 		mockMvc.perform(get("/api/v1/system/modules"))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.data.length()").value(8))
 				.andExpect(jsonPath("$.data[0].status").value("active"))
 				.andExpect(jsonPath("$.data[1].status").value("active"))
-				.andExpect(jsonPath("$.message").value("用户与认证模块已开放，其余功能仍在准备中"));
+				.andExpect(jsonPath("$.data[2].status").value("active"))
+				.andExpect(jsonPath("$.data[3].status").value("planned"))
+				.andExpect(jsonPath("$.data[7].status").value("active"))
+				.andExpect(jsonPath("$.message").value("认证、用户、训练与 AI 分析模块已开放，其余功能仍在准备中"));
 	}
 }
